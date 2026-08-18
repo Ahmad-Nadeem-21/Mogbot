@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "MogBot Interview Coach",
+  "version": "0.1.0",
+  "description": "Paste a job description and resume, then practice an adaptive mock interview.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "MogBot"
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1:5000/*", "http://localhost:5000/*"]
+}

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MogBot Interview Coach</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <img class="brand-mark" src="assets/mogbot-mark.svg" alt="">
+        <div>
+          <h1>MogBot</h1>
+          <p>Practice for the role in front of you.</p>
+        </div>
+      </header>
+
+      <section id="setupView" class="view is-active" aria-labelledby="setupTitle">
+        <div class="section-heading">
+          <h2 id="setupTitle">Start Interview</h2>
+          <span class="step-pill">Setup</span>
+        </div>
+
+        <label class="field">
+          <span>Job description</span>
+          <textarea id="jobDescription" rows="8" placeholder="Paste the job description here."></textarea>
+        </label>
+
+        <label class="field">
+          <span>Resume</span>
+          <textarea id="resumeText" rows="8" placeholder="Paste your resume text here."></textarea>
+        </label>
+
+        <div class="future-option">
+          <label>
+            <input id="smsMode" type="checkbox" disabled>
+            <span>Text my phone for the interview</span>
+          </label>
+          <p>Phone interviews are planned for a later milestone.</p>
+        </div>
+
+        <p id="setupError" class="error" role="alert"></p>
+
+        <div class="actions">
+          <button id="clearDraftButton" class="button secondary" type="button">Clear</button>
+          <button id="startButton" class="button primary" type="button">Start</button>
+        </div>
+      </section>
+
+      <section id="interviewView" class="view" aria-labelledby="interviewTitle">
+        <div class="section-heading">
+          <h2 id="interviewTitle">Mock Interview</h2>
+          <span id="progressPill" class="step-pill">Question 1</span>
+        </div>
+
+        <div class="context-strip">
+          <span id="roleFocus">Role focus loading</span>
+        </div>
+
+        <div id="questionPanel" class="question-panel" aria-live="polite"></div>
+
+        <label class="field answer-field">
+          <span>Your answer</span>
+          <textarea id="answerText" rows="6" placeholder="Type your answer here."></textarea>
+        </label>
+
+        <div id="feedbackPanel" class="feedback-panel" aria-live="polite"></div>
+
+        <div class="actions">
+          <button id="backButton" class="button secondary" type="button">Back</button>
+          <button id="submitAnswerButton" class="button primary" type="button">Submit</button>
+        </div>
+      </section>
+
+      <section id="summaryView" class="view" aria-labelledby="summaryTitle">
+        <div class="section-heading">
+          <h2 id="summaryTitle">Session Notes</h2>
+          <span class="step-pill">Done</span>
+        </div>
+
+        <div id="summaryPanel" class="summary-panel"></div>
+
+        <div class="actions">
+          <button id="newSessionButton" class="button primary" type="button">New Session</button>
+        </div>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

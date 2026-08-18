@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+pytest-cache-files-*/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data that should not be committed
+data/vector_db/*
+!data/vector_db/.gitkeep
+data/cache/*
+!data/cache/.gitkeep
+data/private/*
+logs/
+traces/
+
+# User/private artifacts
+*.resume.pdf
+*.transcript.json
+*.local.json
