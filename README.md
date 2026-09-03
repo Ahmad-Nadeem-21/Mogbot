@@ -12,7 +12,7 @@ MogBot is an adaptive multi-agent AI interview coach for job seekers. The system
 
 MogBot is designed as an agentic multi-agent system, not a fixed LLM pipeline.
 
-The Chrome extension is the first user-facing frontend prototype. It collects the job description, resume text, and interview answers, then sends them to the local Flask server that is started by `main.py`.
+`web/` is the primary frontend: a static site that collects the job description, resume text, and interview answers, then sends them to the Flask server started by `main.py`. `chrome_extension/` is an earlier prototype of the same flow, kept for reference.
 
 `main.py` remains the agent floor manager. It owns the session state, starts agent threads, controls routing, talks to the global vector memory/cache layers, and decides which agent tool should be called next.
 
@@ -56,6 +56,12 @@ Agents do not call `input()`, print user-facing prompts, or directly call each o
 |-- backend/
 |   |-- __init__.py
 |   `-- app.py
+|-- web/
+|   |-- index.html
+|   |-- styles.css
+|   |-- app.js
+|   `-- assets/
+|       `-- mark.svg
 |-- chrome_extension/
 |   |-- manifest.json
 |   |-- popup.html
@@ -108,7 +114,8 @@ The repo currently includes these working prototype pieces:
 - `backend/app.py`: Flask route wrapper used by `main.py`; it accepts sessions and answers, then forwards them to the floor manager.
 - `prompts/agent_prompt_templates.py`: system, task, RAG, ReAct-style, reflection, critique, and output prompts.
 - `helper_agents/*.py`: expert, consistency, safety, and reward-policy review helpers.
-- `chrome_extension/`: first frontend prototype for paste-in job/resume input and popup-based interviews.
+- `web/`: static frontend (landing page + session flow) for paste-in job/resume input and browser-based interviews.
+- `chrome_extension/`: earlier frontend prototype, same flow in a popup.
 - `data/vector_db/`: local vector database runtime files.
 - `data/cache/`: local semantic-cache runtime files.
 - `data/question_bank/`: reusable question examples.
@@ -189,7 +196,17 @@ Backend API:
 python main.py
 ```
 
-Chrome extension prototype:
+Web frontend (local):
+
+```bash
+cd web && python -m http.server 8000
+```
+
+Open `http://127.0.0.1:8000` with `main.py` running at `http://127.0.0.1:5000` in another terminal. `web/app.js` targets `127.0.0.1:5000` automatically on localhost.
+
+Deploying the frontend and backend to different origins: set `<meta name="mogbot-api-base" content="https://your-backend-host">` in `web/index.html` before publishing, and make sure the backend's CORS policy allows that origin.
+
+Chrome extension prototype (legacy):
 
 1. Open `chrome://extensions`.
 2. Enable Developer mode.

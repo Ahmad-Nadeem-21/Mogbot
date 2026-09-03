@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MogBot — Interview Practice From Your Own Resume</title>
+    <meta name="description" content="Paste a job description and a resume. MogBot writes interview questions specific to the gap between them and scores each answer, including follow-ups on vague or unsupported claims.">
+    <meta name="theme-color" content="#F7F6F1">
+    <meta name="mogbot-api-base" content="">
+    <link rel="icon" type="image/svg+xml" href="assets/mark.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="wrap header-row">
+        <a class="brand" href="#top">
+          <img src="assets/mark.svg" alt="" width="32" height="32">
+          <span>MogBot</span>
+        </a>
+
+        <nav class="site-nav" aria-label="Primary">
+          <a href="#how-it-works">How it works</a>
+          <a href="#under-the-hood">Under the hood</a>
+          <a class="button primary small" href="#app">Start practicing</a>
+        </nav>
+
+        <details class="mobile-nav">
+          <summary aria-label="Open menu">Menu</summary>
+          <div class="mobile-nav-panel">
+            <a href="#how-it-works">How it works</a>
+            <a href="#under-the-hood">Under the hood</a>
+            <a href="#app">Start practicing</a>
+          </div>
+        </details>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="wrap hero-grid">
+          <div class="hero-copy">
+            <p class="kicker">Interview practice</p>
+            <h1>Paste the job posting. Paste your resume. Get asked the real questions.</h1>
+            <p class="lede">MogBot reads both, writes questions specific to the gap between them, and scores each answer the way an interviewer would. A vague or unsupported claim gets a follow-up, not a pass.</p>
+            <div class="hero-actions">
+              <a class="button primary" href="#app">Start a practice interview</a>
+              <a class="button ghost" href="#how-it-works">
+                See how it works
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8h9M8.5 4l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </a>
+            </div>
+            <p class="hero-note">Nothing you paste is stored beyond this session.</p>
+          </div>
+
+          <div class="hero-visual" aria-hidden="true">
+            <div class="mock-window">
+              <div class="mock-titlebar">
+                <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+                <span class="mock-titlebar-label">Practice interview</span>
+              </div>
+              <div class="mock-body">
+                <p class="mock-pill">Question 3 of 6</p>
+                <p class="mock-question">Tell me about a time you had to debug a production issue under time pressure.</p>
+                <div class="mock-answer-line"></div>
+                <div class="mock-answer-line short"></div>
+                <div class="mock-feedback">
+                  <strong>72 / 100.</strong> Good structure. Name the measurable outcome — how much did the fix reduce downtime?
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="how-it-works" id="how-it-works">
+        <div class="wrap">
+          <h2>How a session runs</h2>
+          <ol class="steps">
+            <li>
+              <span class="step-num">01</span>
+              <div>
+                <h3>Add the role</h3>
+                <p>Paste the job description and your resume or LinkedIn text. No file uploads, no account.</p>
+              </div>
+            </li>
+            <li>
+              <span class="step-num">02</span>
+              <div>
+                <h3>Answer as you would out loud</h3>
+                <p>Questions are generated from the specific overlap and gaps between the posting and your background.</p>
+              </div>
+            </li>
+            <li>
+              <span class="step-num">03</span>
+              <div>
+                <h3>Get pushed on weak spots</h3>
+                <p>Vague, unsupported, or overconfident answers are challenged with a direct follow-up before you move on.</p>
+              </div>
+            </li>
+            <li>
+              <span class="step-num">04</span>
+              <div>
+                <h3>Read the report</h3>
+                <p>A closing summary looks for patterns across all your answers, not just a per-question score.</p>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="architecture" id="under-the-hood">
+        <div class="wrap arch-grid">
+          <div class="arch-copy">
+            <h2>Under the hood</h2>
+            <p>MogBot isn't one prompt. Seven purpose-built agents split the work — researching the role, reading the resume, generating questions, evaluating answers, challenging weak ones, and writing the final report — and four review agents check the output before it reaches you. They share a vector memory so later agents can reuse what earlier ones already found.</p>
+          </div>
+          <dl class="agent-list">
+            <div><dt>Job Search Agent</dt><dd>Extracts role requirements, keywords, and interview focus areas from the posting.</dd></div>
+            <div><dt>Resume &amp; Role Analyzer</dt><dd>Extracts your skills, evidence, and gaps against that role.</dd></div>
+            <div><dt>Question Generator</dt><dd>Builds and adapts questions from the research, your profile, and prior answers.</dd></div>
+            <div><dt>Interviewer</dt><dd>Decides conversation strategy — clarify, transition, or press further.</dd></div>
+            <div><dt>Evaluator</dt><dd>Scores each answer against a rubric and produces a reward signal.</dd></div>
+            <div><dt>Devil's Advocate</dt><dd>Challenges vague, inconsistent, or unsupported answers directly.</dd></div>
+            <div><dt>Career Coach</dt><dd>Synthesizes every answer into one evidence-grounded closing report.</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="app-section" id="app" aria-labelledby="appHeading">
+        <div class="wrap">
+          <div class="app-intro">
+            <h2 id="appHeading">Run a practice session</h2>
+            <p>Paste real text for both fields, not summaries — the questions are only as specific as what you give it.</p>
+          </div>
+
+          <ol class="stepper" aria-label="Session progress" id="stepper">
+            <li data-step="setup" class="is-current"><span class="stepper-dot"></span>Setup</li>
+            <li data-step="interview"><span class="stepper-dot"></span>Interview</li>
+            <li data-step="report"><span class="stepper-dot"></span>Report</li>
+          </ol>
+
+          <div class="app-shell">
+            <section id="setupView" class="app-view is-active" aria-labelledby="setupTitle">
+              <h3 id="setupTitle" class="sr-only">Session setup</h3>
+              <form id="setupForm" novalidate>
+                <div class="field">
+                  <label for="jobDescription">Job description</label>
+                  <textarea id="jobDescription" rows="10" placeholder="Paste the full job posting here." required></textarea>
+                </div>
+                <div class="field">
+                  <label for="resumeText">Resume</label>
+                  <textarea id="resumeText" rows="10" placeholder="Paste your resume or LinkedIn profile text here." required></textarea>
+                </div>
+
+                <p id="setupError" class="alert alert-error" role="alert" hidden></p>
+
+                <div class="form-actions">
+                  <button type="button" id="clearDraftButton" class="button ghost">Clear</button>
+                  <button type="submit" id="startButton" class="button primary">
+                    <span class="button-label">Start interview</span>
+                    <span class="spinner" hidden aria-hidden="true"></span>
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            <section id="interviewView" class="app-view" aria-labelledby="interviewTitle">
+              <h3 id="interviewTitle" class="sr-only">Mock interview</h3>
+              <div class="view-heading">
+                <span id="progressPill" class="pill">Question 1</span>
+                <p id="roleFocus" class="context-line"></p>
+              </div>
+
+              <div id="questionPanel" class="question-panel" aria-live="polite"></div>
+
+              <form id="answerForm">
+                <div class="field">
+                  <label for="answerText">Your answer</label>
+                  <textarea id="answerText" rows="8" placeholder="Type your answer as you'd say it out loud." required></textarea>
+                </div>
+
+                <div id="feedbackPanel" class="alert alert-feedback" aria-live="polite" hidden></div>
+
+                <div class="form-actions">
+                  <button type="button" id="backButton" class="button ghost">Back to setup</button>
+                  <button type="submit" id="submitAnswerButton" class="button primary">
+                    <span class="button-label">Submit answer</span>
+                    <span class="spinner" hidden aria-hidden="true"></span>
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            <section id="summaryView" class="app-view" aria-labelledby="summaryTitle">
+              <h3 id="summaryTitle" class="sr-only">Session report</h3>
+              <div id="summaryPanel" class="summary-panel"></div>
+              <div class="form-actions">
+                <button type="button" id="newSessionButton" class="button primary">Start a new session</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap footer-row">
+        <p>Built by Shazaib Dawood, Zaid Haidry, and Ahmad Nadeem.</p>
+      </div>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
