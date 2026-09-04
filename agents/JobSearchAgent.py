@@ -10,10 +10,48 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from core import llm_client
+from core.prompt_manager import PromptManager
 from core.vector_memory import GlobalVectorMemory
 
+_PROMPT_MANAGER = PromptManager()
+
+_LLM_TOOL_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "role_title": {"type": "string"},
+        "company_context": {"type": "string"},
+        "required_skills": {"type": "array", "items": {"type": "string"}},
+        "preferred_skills": {"type": "array", "items": {"type": "string"}},
+        "responsibilities": {"type": "array", "items": {"type": "string"}},
+        "seniority_level": {
+            "type": "string",
+            "enum": ["intern", "junior", "mid-level", "lead", "senior", "staff/principal"],
+        },
+        "keywords": {"type": "array", "items": {"type": "string"}},
+        "interview_focus_areas": {"type": "array", "items": {"type": "string"}},
+        "reflection_passed": {"type": "boolean"},
+        "reflection_comment": {"type": "string"},
+        "confidence": {"type": "number"},
+        "reasoning_summary": {"type": "string"},
+    },
+    "required": [
+        "role_title",
+        "company_context",
+        "required_skills",
+        "responsibilities",
+        "seniority_level",
+        "interview_focus_areas",
+        "reflection_passed",
+        "confidence",
+        "reasoning_summary",
+    ],
+}
 
 
+
+
+_MEMORY_HIT_THRESHOLD = 0.5
 
 _SENIORITY_MAP: List[tuple[str, str]] = [
     (r"\b(principal|staff|distinguished)\b", "staff/principal"),
@@ -203,6 +241,117 @@ def run(
 ) -> Dict[str, Any]:
     """Research the job role and return a job_research AgentMessage.
 
+    Uses a real Anthropic call when ANTHROPIC_API_KEY is configured; falls
+    back to the deterministic heuristic below (unconfigured key, network
+    error, or invalid structured output) so the agent always returns a
+    usable result. See ACTION_PLAN.md Milestone 7.
+    """
+    if llm_client.is_configured():
+        try:
+            return _run_llm(job_input, vector_memory)
+        except Exception as exc:  # LLMNotConfiguredError, LLMCallError, or any API failure
+            print(f"[JobSearchAgent] LLM path failed ({exc}); falling back to heuristic.")
+    return _run_heuristic(job_input, vector_memory)
+
+
+def _run_llm(
+    job_input: Dict[str, Any],
+    vector_memory: Optional[GlobalVectorMemory],
+) -> Dict[str, Any]:
+    if not job_input:
+        return {
+            "message_type": "job_research",
+            "status": "error",
+            "payload": {"error": "No job_input provided."},
+        }
+
+    job_description: str = job_input.get("job_description", "").strip()
+    if not job_description:
+        return {
+            "message_type": "job_research",
+            "status": "error",
+            "payload": {"error": "job_description is required and must not be empty."},
+        }
+
+    company_name: Optional[str] = job_input.get("company_name")
+    provided_title: Optional[str] = job_input.get("role_title")
+    job_posting_url: Optional[str] = job_input.get("job_posting_url")
+    session_id: str = job_input.get("session_id", str(uuid.uuid4()))
+
+    system_prompt = _PROMPT_MANAGER.render("job_search", "system", {})
+    task_prompt = _PROMPT_MANAGER.render(
+        "job_search", "task", {"job_description": llm_client.wrap_untrusted_content("job_description", job_description)}
+    )
+    hints = []
+    if company_name:
+        hints.append(f"The candidate says the company is: {company_name}")
+    if provided_title:
+        hints.append(f"The candidate says the role title is: {provided_title}")
+    user_prompt = task_prompt + ("\n" + "\n".join(hints) if hints else "")
+
+    llm_output = llm_client.call_structured(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        tool_name="record_job_research",
+        tool_description="Record structured job research extracted from a job description.",
+        input_schema=_LLM_TOOL_SCHEMA,
+    )
+
+    payload = {
+        "role_title": llm_output["role_title"],
+        "company_context": llm_output["company_context"],
+        "required_skills": llm_output.get("required_skills", []),
+        "preferred_skills": llm_output.get("preferred_skills", []),
+        "responsibilities": llm_output.get("responsibilities", []),
+        "seniority_level": llm_output["seniority_level"],
+        "keywords": llm_output.get("keywords", []),
+        "interview_focus_areas": llm_output["interview_focus_areas"],
+        "job_posting_url": job_posting_url,
+        "source_map": {key: "anthropic_llm" for key in (
+            "role_title", "company_context", "required_skills", "preferred_skills",
+            "responsibilities", "seniority_level", "keywords", "interview_focus_areas",
+        )},
+        "reflection_passed": llm_output["reflection_passed"],
+        "reflection_comment": llm_output.get("reflection_comment", ""),
+    }
+
+    result = {
+        "schema_version": "1.0",
+        "message_id": str(uuid.uuid4()),
+        "session_id": session_id,
+        "source_agent": "JobSearchAgent",
+        "message_type": "job_research",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "success",
+        "payload": payload,
+        "decision": {
+            "action": "job_research_complete",
+            "reasoning_summary": llm_output["reasoning_summary"],
+            "tools_considered": ["job_description_text", "global_vector_memory", "anthropic_llm"],
+            "tools_used": ["job_description_text", "anthropic_llm"],
+            "confidence": float(llm_output["confidence"]),
+            "next_recommended_tool": "ResumeAndRoleAnalyzer",
+        },
+    }
+
+    if vector_memory is not None:
+        vector_memory.add_record({
+            "record_id": result["message_id"],
+            "session_id": session_id,
+            "namespace": "job_research",
+            "text": job_description,
+            "metadata": result["payload"],
+        })
+
+    return result
+
+
+def _run_heuristic(
+    job_input: Dict[str, Any],
+    vector_memory: Optional[GlobalVectorMemory] = None,
+) -> Dict[str, Any]:
+    """Deterministic regex/keyword fallback - see `run()` for when this is used.
+
     Parameters
     ----------
     job_input : dict
@@ -245,10 +394,14 @@ def run(
     job_posting_url: Optional[str] = job_input.get("job_posting_url")
     session_id: str = job_input.get("session_id", str(uuid.uuid4()))
 
+    # GlobalVectorMemory.search() always returns its top_k best matches, even
+    # when nothing is actually similar (it doesn't filter by score) - so a
+    # hit only counts as a real memory hit above a similarity threshold,
+    # otherwise every call would look like a cache hit once memory is non-empty.
     cached_record = None
     if vector_memory is not None:
         hits = vector_memory.search(job_description, namespace="job_research", top_k=1)
-        if hits:
+        if hits and float(hits[0].get("metadata", {}).get("similarity_score", 0.0)) >= _MEMORY_HIT_THRESHOLD:
             cached_record = hits[0]
     has_memory_hit: bool = cached_record is not None
 

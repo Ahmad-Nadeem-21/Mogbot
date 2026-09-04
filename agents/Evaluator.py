@@ -5,8 +5,45 @@ Tools/Resources: Rubric definitions, optional vector memory for similar labeled 
 Data/Documents: User answer from main.py, current question, job research, candidate profile, and role-specific evaluation rubrics.
 """
 
+import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+
+from core import llm_client
+from core.prompt_manager import PromptManager
+from core.vector_memory import GlobalVectorMemory
+
+_PROMPT_MANAGER = PromptManager()
+
+_LLM_TOOL_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "overall_score": {"type": "number", "minimum": 0, "maximum": 100},
+        "rubric_scores": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string"},
+                    "score": {"type": "number"},
+                    "rationale": {"type": "string"},
+                },
+                "required": ["category", "score", "rationale"],
+            },
+        },
+        "strengths": {"type": "array", "items": {"type": "string"}},
+        "weaknesses": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "needs_followup": {"type": "boolean"},
+        "evaluator_comment": {"type": "string"},
+        "reasoning_summary": {"type": "string"},
+    },
+    "required": [
+        "overall_score", "rubric_scores", "confidence", "needs_followup",
+        "evaluator_comment", "reasoning_summary",
+    ],
+}
 
 
 @dataclass
@@ -185,8 +222,109 @@ def run(
     user_response_message: Dict[str, Any],
     rubric: Optional[List[Dict[str, Any]]] = None,
     session_context: Optional[Dict[str, Any]] = None,
+    vector_memory: Optional[GlobalVectorMemory] = None,
 ) -> Dict[str, Any]:
     """Score a candidate answer and return an evaluation_result AgentMessage.
+
+    Uses a real Anthropic call when ANTHROPIC_API_KEY is configured; falls
+    back to the deterministic rubric scorer below otherwise or on any API
+    failure. See ACTION_PLAN.md Milestone 7.
+    """
+    if llm_client.is_configured():
+        try:
+            return _run_llm(user_response_message, rubric, session_context, vector_memory)
+        except Exception as exc:
+            print(f"[Evaluator] LLM path failed ({exc}); falling back to heuristic.")
+    return _run_heuristic(user_response_message, rubric, session_context, vector_memory)
+
+
+def _run_llm(
+    user_response_message: Dict[str, Any],
+    rubric: Optional[List[Dict[str, Any]]],
+    session_context: Optional[Dict[str, Any]],
+    vector_memory: Optional[GlobalVectorMemory],
+) -> Dict[str, Any]:
+    if not user_response_message:
+        return {
+            "message_type": "evaluation_result",
+            "payload": {"error": "No user_response_message provided.", "needs_followup": True},
+        }
+
+    answer: str = user_response_message.get("answer_text", "").strip()
+    question: str = user_response_message.get("question", "").strip()
+    question_id: Optional[str] = user_response_message.get("question_id")
+
+    if not answer:
+        return {
+            "message_type": "evaluation_result",
+            "payload": {
+                "question_id": question_id,
+                "overall_score": 0,
+                "needs_followup": True,
+                "evaluator_comment": "Empty answer - no content to evaluate.",
+                "acceptable": False,
+                "reward_signal": 0.0,
+            },
+        }
+
+    active_rubric = _get_rubric(rubric)
+    answer_context = {
+        "question": question,
+        "answer_text": answer,
+        "rubric": [{"name": c.name, "weight": c.weight, "description": c.description} for c in active_rubric],
+    }
+
+    system_prompt = _PROMPT_MANAGER.render("evaluator", "system", {})
+    task_prompt = _PROMPT_MANAGER.render(
+        "evaluator",
+        "task",
+        {"answer_context": str({**answer_context, "answer_text": llm_client.wrap_untrusted_content("answer_text", answer)})},
+    )
+
+    llm_output = llm_client.call_structured(
+        system_prompt=system_prompt,
+        user_prompt=task_prompt,
+        tool_name="record_evaluation",
+        tool_description="Record a structured rubric-based evaluation of a candidate's answer.",
+        input_schema=_LLM_TOOL_SCHEMA,
+    )
+
+    overall = float(llm_output["overall_score"])
+    needs_followup = bool(llm_output["needs_followup"])
+    result_payload = {
+        "question_id": question_id,
+        "answer_text": answer,
+        "overall_score": overall,
+        "rubric_scores": llm_output["rubric_scores"],
+        "strengths": llm_output.get("strengths", []),
+        "weaknesses": llm_output.get("weaknesses", []),
+        "evidence": llm_output.get("evidence", []),
+        "confidence": float(llm_output["confidence"]),
+        "needs_followup": needs_followup,
+        "evaluator_comment": llm_output["evaluator_comment"],
+        "reward_signal": _reward_signal(overall),
+        "acceptable": not needs_followup,
+    }
+
+    if vector_memory is not None:
+        vector_memory.add_record({
+            "record_id": str(uuid.uuid4()),
+            "session_id": str((session_context or {}).get("session_id", "")),
+            "namespace": "rubric_examples",
+            "text": f"Q: {question}\nA: {answer}",
+            "metadata": result_payload,
+        })
+
+    return {"message_type": "evaluation_result", "payload": result_payload}
+
+
+def _run_heuristic(
+    user_response_message: Dict[str, Any],
+    rubric: Optional[List[Dict[str, Any]]] = None,
+    session_context: Optional[Dict[str, Any]] = None,
+    vector_memory: Optional[GlobalVectorMemory] = None,
+) -> Dict[str, Any]:
+    """Deterministic rubric-heuristic fallback - see `run()` for when this is used.
 
     Parameters
     ----------
@@ -268,20 +406,31 @@ def run(
         acceptable=acceptable,
     )
 
+    result_payload = {
+        "question_id": payload.question_id,
+        "answer_text": payload.answer_text,
+        "overall_score": payload.overall_score,
+        "rubric_scores": payload.rubric_scores,
+        "strengths": payload.strengths,
+        "weaknesses": payload.weaknesses,
+        "evidence": payload.evidence,
+        "confidence": payload.confidence,
+        "needs_followup": payload.needs_followup,
+        "evaluator_comment": payload.evaluator_comment,
+        "reward_signal": payload.reward_signal,
+        "acceptable": payload.acceptable,
+    }
+
+    if vector_memory is not None:
+        vector_memory.add_record({
+            "record_id": str(uuid.uuid4()),
+            "session_id": str((session_context or {}).get("session_id", "")),
+            "namespace": "rubric_examples",
+            "text": f"Q: {question}\nA: {answer}",
+            "metadata": result_payload,
+        })
+
     return {
         "message_type": "evaluation_result",
-        "payload": {
-            "question_id": payload.question_id,
-            "answer_text": payload.answer_text,
-            "overall_score": payload.overall_score,
-            "rubric_scores": payload.rubric_scores,
-            "strengths": payload.strengths,
-            "weaknesses": payload.weaknesses,
-            "evidence": payload.evidence,
-            "confidence": payload.confidence,
-            "needs_followup": payload.needs_followup,
-            "evaluator_comment": payload.evaluator_comment,
-            "reward_signal": payload.reward_signal,
-            "acceptable": payload.acceptable,
-        },
+        "payload": result_payload,
     }

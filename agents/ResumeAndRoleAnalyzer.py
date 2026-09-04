@@ -10,6 +10,47 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from core import llm_client
+from core.prompt_manager import PromptManager
+from core.vector_memory import GlobalVectorMemory
+
+_PROMPT_MANAGER = PromptManager()
+
+_LLM_TOOL_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "skills": {"type": "array", "items": {"type": "string"}},
+        "experience_highlights": {"type": "array", "items": {"type": "string"}},
+        "missing_keywords": {"type": "array", "items": {"type": "string"}},
+        "role_keywords": {"type": "array", "items": {"type": "string"}},
+        "seniority_level": {
+            "type": "string",
+            "enum": ["intern", "junior", "mid-level", "lead", "senior", "staff/principal"],
+        },
+        "risk_notes": {"type": "array", "items": {"type": "string"}},
+        "evidence_snippets": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"skill": {"type": "string"}, "excerpt": {"type": "string"}},
+                "required": ["skill", "excerpt"],
+            },
+        },
+        "reflection_passed": {"type": "boolean"},
+        "reflection_comment": {"type": "string"},
+        "confidence": {"type": "number"},
+        "reasoning_summary": {"type": "string"},
+    },
+    "required": [
+        "skills",
+        "experience_highlights",
+        "seniority_level",
+        "reflection_passed",
+        "confidence",
+        "reasoning_summary",
+    ],
+}
+
 
 
 _SKILL_PATTERNS: List[str] = [
@@ -282,8 +323,129 @@ def _reflection_pass(
 
 
 
-def run(input_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Parse resume/profile text and return a candidate_profile AgentMessage."""
+def run(
+    input_data: Dict[str, Any],
+    vector_memory: Optional[GlobalVectorMemory] = None,
+) -> Dict[str, Any]:
+    """Parse resume/profile text and return a candidate_profile AgentMessage.
+
+    Uses a real Anthropic call when ANTHROPIC_API_KEY is configured; falls
+    back to the deterministic heuristic below otherwise or on any API
+    failure. See ACTION_PLAN.md Milestone 7.
+    """
+    if llm_client.is_configured():
+        try:
+            return _run_llm(input_data, vector_memory)
+        except Exception as exc:
+            print(f"[ResumeAndRoleAnalyzer] LLM path failed ({exc}); falling back to heuristic.")
+    return _run_heuristic(input_data, vector_memory)
+
+
+def _run_llm(
+    input_data: Dict[str, Any],
+    vector_memory: Optional[GlobalVectorMemory],
+) -> Dict[str, Any]:
+    if not input_data:
+        return {
+            "message_type": "candidate_profile",
+            "status": "error",
+            "payload": {"error": "No input_data provided."},
+        }
+
+    resume_text: str = input_data.get("resume_text", "").strip()
+    resume_path: Optional[str] = input_data.get("resume_path")
+    if not resume_text and resume_path:
+        try:
+            with open(resume_path, "r", encoding="utf-8") as fh:
+                resume_text = fh.read().strip()
+        except OSError as exc:
+            return {
+                "message_type": "candidate_profile",
+                "status": "error",
+                "payload": {"error": f"Could not read resume_path: {exc}"},
+            }
+
+    if not resume_text:
+        return {
+            "message_type": "candidate_profile",
+            "status": "error",
+            "payload": {"error": "resume_text or resume_path is required."},
+        }
+
+    linkedin_url: Optional[str] = input_data.get("linkedin_url")
+    job_research: Optional[Dict[str, Any]] = input_data.get("job_research")
+    session_id: str = input_data.get("session_id", str(uuid.uuid4()))
+
+    system_prompt = _PROMPT_MANAGER.render("resume_analyzer", "system", {})
+    task_prompt = _PROMPT_MANAGER.render(
+        "resume_analyzer", "task", {"resume_text": llm_client.wrap_untrusted_content("resume_text", resume_text)}
+    )
+    if job_research:
+        task_prompt += (
+            "\nCompute missing_keywords as job_research keywords not evidenced in the resume. "
+            f"job_research keywords: {job_research.get('keywords', [])}"
+        )
+
+    llm_output = llm_client.call_structured(
+        system_prompt=system_prompt,
+        user_prompt=task_prompt,
+        tool_name="record_candidate_profile",
+        tool_description="Record structured candidate profile extracted from a resume.",
+        input_schema=_LLM_TOOL_SCHEMA,
+    )
+
+    payload = {
+        "skills": llm_output["skills"],
+        "experience_highlights": llm_output["experience_highlights"],
+        "missing_keywords": llm_output.get("missing_keywords", []),
+        "role_keywords": llm_output.get("role_keywords", []),
+        "seniority_level": llm_output["seniority_level"],
+        "risk_notes": llm_output.get("risk_notes", []),
+        "evidence_snippets": llm_output.get("evidence_snippets", []),
+        "source_map": {key: "anthropic_llm" for key in (
+            "skills", "experience_highlights", "missing_keywords", "role_keywords",
+            "seniority_level", "risk_notes", "evidence_snippets",
+        )},
+        "reflection_passed": llm_output["reflection_passed"],
+        "reflection_comment": llm_output.get("reflection_comment", ""),
+    }
+
+    result = {
+        "schema_version": "1.0",
+        "message_id": str(uuid.uuid4()),
+        "session_id": session_id,
+        "source_agent": "ResumeAndRoleAnalyzer",
+        "message_type": "candidate_profile",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "success",
+        "payload": payload,
+        "decision": {
+            "action": "candidate_profile_complete",
+            "reasoning_summary": llm_output["reasoning_summary"],
+            "tools_considered": ["resume_text", "global_vector_memory", "anthropic_llm"],
+            "tools_used": ["resume_text", "anthropic_llm"],
+            "confidence": float(llm_output["confidence"]),
+            "next_recommended_tool": "QuestionGenerator",
+        },
+    }
+
+    if vector_memory is not None:
+        vector_memory.add_record({
+            "record_id": result["message_id"],
+            "session_id": session_id,
+            "namespace": "candidate_profile",
+            "text": resume_text,
+            "metadata": result["payload"],
+        })
+
+    return result
+
+
+def _run_heuristic(
+    input_data: Dict[str, Any],
+    vector_memory: Optional[GlobalVectorMemory] = None,
+) -> Dict[str, Any]:
+    """Deterministic regex/keyword fallback - see `run()` for when this is used."""
     if not input_data:
         return {
             "message_type": "candidate_profile",
@@ -319,6 +481,17 @@ def run(input_data: Dict[str, Any]) -> Dict[str, Any]:
     job_research: Optional[Dict[str, Any]] = input_data.get("job_research")
     session_id: str = input_data.get("session_id", str(uuid.uuid4()))
 
+    # GlobalVectorMemory.search() always returns its top_k best matches even
+    # when nothing is actually similar, so a hit only counts above a
+    # similarity threshold - otherwise every call looks like a memory hit
+    # once the namespace is non-empty.
+    has_memory_hit = False
+    if vector_memory is not None:
+        hits = vector_memory.search(resume_text, namespace="candidate_profile", top_k=1)
+        has_memory_hit = bool(
+            hits and float(hits[0].get("metadata", {}).get("similarity_score", 0.0)) >= 0.5
+        )
+
     skills = _extract_skills(resume_text)
     seniority_level, seniority_source = _detect_seniority(resume_text)
     experience_highlights = _extract_experience_highlights(resume_text)
@@ -346,14 +519,17 @@ def run(input_data: Dict[str, Any]) -> Dict[str, Any]:
         "linkedin_url": "user_input" if linkedin_url else "not_provided",
     }
 
+    tools_used = ["resume_text"]
+    if has_memory_hit:
+        tools_used.append("global_vector_memory")
+
     reasoning_summary = (
         f"Extracted {len(skills)} skills, seniority '{seniority_level}' ({seniority_source})."
         + (f" {len(missing_keywords)} missing keywords vs job research." if job_research else "")
         + (" Reflection passed." if reflection_passed else " Reflection flagged issues - confidence reduced.")
     )
 
-
-    return {
+    result = {
         "schema_version": "1.0",
         "message_id": str(uuid.uuid4()),
         "session_id": session_id,
@@ -376,7 +552,20 @@ def run(input_data: Dict[str, Any]) -> Dict[str, Any]:
         "decision": {
             "action": "candidate_profile_complete",
             "reasoning_summary": reasoning_summary,
+            "tools_considered": ["resume_text"],
+            "tools_used": tools_used,
             "confidence": confidence,
             "next_recommended_tool": "QuestionGenerator",
         },
     }
+
+    if vector_memory is not None and not has_memory_hit:
+        vector_memory.add_record({
+            "record_id": result["message_id"],
+            "session_id": session_id,
+            "namespace": "candidate_profile",
+            "text": resume_text,
+            "metadata": result["payload"],
+        })
+
+    return result

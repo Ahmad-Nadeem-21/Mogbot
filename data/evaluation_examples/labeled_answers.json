@@ -1,0 +1,44 @@
+[
+  {
+    "id": "ex-001",
+    "question": "Tell me about a time you had to lead a project without formal authority.",
+    "answer_text": "First, I identified the stakeholders who cared most about the outcome. Then I set up a weekly sync, because the team lacked visibility into blockers. As a result, we shipped two weeks early and the team specifically praised the situation, task, action, and result being clear. However, I had to keep pushing for buy-in the whole time.",
+    "label": "acceptable",
+    "expect_devils_advocate": "no_challenge"
+  },
+  {
+    "id": "ex-002",
+    "question": "How would you design a scalable REST API for a high-traffic app?",
+    "answer_text": "I don't know, maybe use a database and some servers.",
+    "label": "needs_followup",
+    "expect_devils_advocate": "challenge_prompt"
+  },
+  {
+    "id": "ex-003",
+    "question": "What attracted you to this position specifically?",
+    "answer_text": "I've followed the company's engineering blog for two years, particularly the posts on their migration to event-driven architecture, and I want to work on systems at that scale with a team that documents its decisions publicly.",
+    "label": "acceptable",
+    "expect_devils_advocate": "no_challenge"
+  },
+  {
+    "id": "ex-004",
+    "question": "Describe a situation where you faced a significant technical challenge.",
+    "answer_text": "It was hard but I fixed it.",
+    "label": "needs_followup",
+    "expect_devils_advocate": "challenge_prompt"
+  },
+  {
+    "id": "ex-005",
+    "question": "Give me an example of a time you had a disagreement with a teammate.",
+    "answer_text": "",
+    "label": "needs_followup",
+    "expect_devils_advocate": "challenge_prompt"
+  },
+  {
+    "id": "ex-006",
+    "question": "When would you choose a NoSQL database over a relational one?",
+    "answer_text": "When the access pattern is key-value lookups at high write volume and the schema is expected to change often, because enforcing a rigid relational schema would slow iteration. For example, a session-store or event-log use case, where I would pick something like DynamoDB or Cassandra over Postgres, and accept eventual consistency as the tradeoff.",
+    "label": "acceptable",
+    "expect_devils_advocate": "no_challenge"
+  }
+]

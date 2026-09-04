@@ -1,2 +1,5 @@
 flask
 pydantic
+anthropic
+python-dotenv
+flask-limiter

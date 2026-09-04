@@ -10,10 +10,43 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from core import llm_client
+from core.prompt_manager import PromptManager
+from core.vector_memory import GlobalVectorMemory
 
-
+_PROMPT_MANAGER = PromptManager()
 
 DIFFICULTY_LEVELS = ["easy", "medium", "hard"]
+
+_QUESTION_ITEM_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string"},
+        "difficulty": {"type": "string", "enum": DIFFICULTY_LEVELS},
+        "skill_tags": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["text", "difficulty"],
+}
+
+_LLM_TOOL_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "phone_screen": {"type": "array", "items": _QUESTION_ITEM_SCHEMA},
+        "behavioral": {"type": "array", "items": _QUESTION_ITEM_SCHEMA},
+        "technical": {"type": "array", "items": _QUESTION_ITEM_SCHEMA},
+        "difficulty_level": {"type": "string", "enum": DIFFICULTY_LEVELS},
+        "targeted_gaps": {"type": "array", "items": {"type": "string"}},
+        "rationale": {"type": "string"},
+        "reflection_passed": {"type": "boolean"},
+        "reflection_comment": {"type": "string"},
+        "confidence": {"type": "number"},
+        "reasoning_summary": {"type": "string"},
+    },
+    "required": [
+        "phone_screen", "behavioral", "technical", "difficulty_level",
+        "reflection_passed", "confidence", "reasoning_summary",
+    ],
+}
 
 # avg_score >= HARD_THRESHOLD , then bump difficulty up
 # avg_score <= EASY_THRESHOLD , thenbump difficulty down
@@ -356,8 +389,123 @@ def run(
     job_research: Dict[str, Any],
     candidate_profile: Optional[Dict[str, Any]] = None,
     session_state: Optional[Dict[str, Any]] = None,
+    vector_memory: Optional[GlobalVectorMemory] = None,
 ) -> Dict[str, Any]:
-    """Build the initial question plan for a new session."""
+    """Build the initial question plan for a new session.
+
+    Uses a real Anthropic call when ANTHROPIC_API_KEY is configured; falls
+    back to the deterministic template bank below otherwise or on any API
+    failure. See ACTION_PLAN.md Milestone 7.
+    """
+    if llm_client.is_configured():
+        try:
+            return _run_llm(job_research, candidate_profile, session_state, vector_memory)
+        except Exception as exc:
+            print(f"[QuestionGenerator] LLM path failed ({exc}); falling back to heuristic.")
+    return _run_heuristic(job_research, candidate_profile, session_state, vector_memory)
+
+
+def _run_llm(
+    job_research: Dict[str, Any],
+    candidate_profile: Optional[Dict[str, Any]],
+    session_state: Optional[Dict[str, Any]],
+    vector_memory: Optional[GlobalVectorMemory],
+) -> Dict[str, Any]:
+    if not job_research:
+        return {
+            "message_type": "question_plan",
+            "status": "error",
+            "payload": {"error": "job_research is required."},
+        }
+
+    candidate_profile = candidate_profile or {}
+    session_id: str = (session_state or {}).get("session_id", str(uuid.uuid4()))
+    avg_score = _avg_recent_score(session_state)
+
+    system_prompt = _PROMPT_MANAGER.render("question_generator", "system", {})
+    task_prompt = _PROMPT_MANAGER.render(
+        "question_generator",
+        "task",
+        {"job_research": str(job_research), "candidate_profile": str(candidate_profile)},
+    )
+    task_prompt += (
+        "\nGenerate at least 3 phone_screen, 4 behavioral, and 4 technical questions. "
+        "Base difficulty_level on this recent performance signal (None means no history yet): "
+        f"avg_score={avg_score}."
+    )
+
+    llm_output = llm_client.call_structured(
+        system_prompt=system_prompt,
+        user_prompt=task_prompt,
+        tool_name="record_question_plan",
+        tool_description="Record a structured, staged interview question plan.",
+        input_schema=_LLM_TOOL_SCHEMA,
+    )
+
+    def _finalize_stage(stage: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        finalized = []
+        for item in items:
+            finalized.append({
+                "question_id": str(uuid.uuid4()),
+                "stage": stage,
+                "difficulty": item.get("difficulty", "medium"),
+                "skill_tags": item.get("skill_tags", []),
+                "text": item["text"],
+            })
+        return finalized
+
+    phone_screen = _finalize_stage("phone_screen", llm_output["phone_screen"])
+    behavioral = _finalize_stage("behavioral", llm_output["behavioral"])
+    technical = _finalize_stage("technical", llm_output["technical"])
+
+    result = {
+        "schema_version": "1.0",
+        "message_id": str(uuid.uuid4()),
+        "session_id": session_id,
+        "source_agent": "QuestionGenerator",
+        "message_type": "question_plan",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "success",
+        "payload": {
+            "phone_screen": phone_screen,
+            "behavioral": behavioral,
+            "technical": technical,
+            "difficulty_level": llm_output["difficulty_level"],
+            "targeted_gaps": llm_output.get("targeted_gaps", []),
+            "job_requirements_covered": job_research.get("required_skills", []),
+            "rationale": llm_output.get("rationale", ""),
+            "reflection_passed": llm_output["reflection_passed"],
+            "reflection_comment": llm_output.get("reflection_comment", ""),
+        },
+        "decision": {
+            "action": "question_plan_ready",
+            "reasoning_summary": llm_output["reasoning_summary"],
+            "tools_considered": ["job_research", "candidate_profile", "global_vector_memory", "anthropic_llm"],
+            "tools_used": ["job_research", "candidate_profile", "anthropic_llm"],
+            "confidence": float(llm_output["confidence"]),
+            "next_recommended_tool": "Interviewer",
+        },
+    }
+
+    if vector_memory is not None:
+        vector_memory.add_record({
+            "record_id": result["message_id"],
+            "session_id": session_id,
+            "namespace": "question_bank",
+            "text": f"{job_research.get('role_title', '')} {' '.join(job_research.get('keywords', []))}",
+            "metadata": result["payload"],
+        })
+
+    return result
+
+
+def _run_heuristic(
+    job_research: Dict[str, Any],
+    candidate_profile: Optional[Dict[str, Any]] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    vector_memory: Optional[GlobalVectorMemory] = None,
+) -> Dict[str, Any]:
+    """Deterministic template-bank fallback - see `run()` for when this is used."""
     if not job_research:
         return {
             "message_type": "question_plan",
@@ -415,7 +563,7 @@ def run(
     )
 
 
-    return {
+    result = {
         "schema_version": "1.0",
         "message_id": str(uuid.uuid4()),
         "session_id": session_id,
@@ -442,10 +590,23 @@ def run(
         "decision": {
             "action": "question_plan_ready",
             "reasoning_summary": reasoning_summary,
+            "tools_considered": ["job_research", "candidate_profile", "global_vector_memory"],
+            "tools_used": ["job_research", "candidate_profile"] + (["global_vector_memory"] if vector_memory is not None else []),
             "confidence": confidence,
             "next_recommended_tool": "Interviewer",
         },
     }
+
+    if vector_memory is not None:
+        vector_memory.add_record({
+            "record_id": result["message_id"],
+            "session_id": session_id,
+            "namespace": "question_bank",
+            "text": f"{job_research.get('role_title', '')} {' '.join(focus_tags)}",
+            "metadata": result["payload"],
+        })
+
+    return result
 
 
 def next_question(

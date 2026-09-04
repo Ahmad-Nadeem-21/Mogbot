@@ -7,6 +7,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from agents.DevilsAdvocate import run
 
 
+@pytest.fixture(autouse=True)
+def _force_heuristic_path(monkeypatch):
+    """This file tests the deterministic heuristic fallback specifically, so
+    it must not pick up a real ANTHROPIC_API_KEY from the environment/.env -
+    otherwise these become slow, costly, non-deterministic live-API calls
+    instead of the fast offline regression tests they're meant to be. The
+    real LLM path is covered separately by run_llm_agent_integration_tests.py.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+
 def test_challenge_on_needs_followup():
     msg = {"needs_followup": True, "question_id": "q1", "answer_text": "I think so."}
     result = run(msg)

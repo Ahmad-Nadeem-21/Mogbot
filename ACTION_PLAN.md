@@ -378,6 +378,10 @@ Helper agents are part of feedback loops. `main.py` decides when to call them.
 
 ## Milestones
 
+Phase 1 finishes what the class prototype started. Phase 2 turns it into a real, deployed, LLM-backed product — start Phase 2 only once Phase 1 is fully checked off.
+
+## Phase 1: Class Prototype
+
 ### Milestone 1: Agentic Prototype Foundations
 
 - [x] Main agent tools return `AgentMessage`-style dictionaries with `decision` metadata.
@@ -397,27 +401,79 @@ Helper agents are part of feedback loops. `main.py` decides when to call them.
 ### Milestone 3: Shared Memory and Cache
 
 - [x] Global vector database is initialized from `main.py`.
-- [ ] Job, resume, questions, answers, scores, challenges, and reports are embedded.
+- [x] Job, resume, questions, answers, scores, challenges, and reports are embedded. (Added memory writes to `ResumeAndRoleAnalyzer`, `QuestionGenerator`, `Evaluator`, `DevilsAdvocate`, and the conversation turn in `main.py`'s `submit_answer`.)
 - [x] Semantic cache reuses similar job descriptions and generated material.
-- [x] Concurrent memory access is safe for the local threaded runtime.
+- [x] Concurrent memory access is safe for the local threaded runtime. (Fixed `CareerCoach.run()` constructing its own `GlobalVectorMemory()`; it now takes the shared instance from `main.py`.)
 
 ### Milestone 4: Extension Backend Integration
 
 - [x] `main.py` starts the Flask server thread for health, session start, session read, and answer submission endpoints.
 - [x] Chrome extension sends job, resume, and answer payloads to `main.py` through Flask.
-- [ ] Persist sessions outside process memory.
-- [ ] Add end-to-end tests for the full extension-to-backend interview flow.
+- [x] Add end-to-end tests for the full extension-to-backend interview flow. (`tests/run_e2e_flask_tests.py`, run via `python tests/run_e2e_flask_tests.py`, drives the real Flask endpoints through a full session. Session persistence itself moved to Milestone 9 — no need to solve it twice.)
 
 ### Milestone 5: Feedback and Reward Loops
 
-- [ ] Evaluator produces reward signals.
-- [ ] Question Generator adapts difficulty from rewards.
-- [ ] Devil's Advocate challenge decisions are evaluated.
-- [ ] Helper agents review borderline or important outputs.
+- [x] Evaluator produces reward signals. (`reward_signal` in `Evaluator.run()` payload.)
+- [x] Question Generator adapts difficulty from rewards. (`_resolve_difficulty()` reacts to recent evaluator scores.)
+- [x] Devil's Advocate challenge decisions are evaluated. (`RewardReviewAgent` flags challenges triggered on strong answers.)
+- [x] Helper agents review borderline or important outputs. (`submit_answer` in `main.py` now calls `helper_expert_review` whenever evaluator confidence is below 0.6, in addition to the existing final-report reviews.)
 
 ### Milestone 6: Evaluation
 
-- [ ] Add labeled acceptable/needs-follow-up answers.
-- [ ] Compare Devil's Advocate decisions to labels.
-- [ ] Review score consistency across sessions.
-- [ ] Use logs/traces to confirm tool choice, memory retrieval, cache reuse, and feedback loops.
+- [x] Add labeled acceptable/needs-follow-up answers. (`data/evaluation_examples/labeled_answers.json`.)
+- [x] Compare Devil's Advocate decisions to labels. (`tests/run_evaluation_harness_tests.py::test_labeled_example_agreement`; today's heuristic agents agree with human labels on 3/6 examples — a real baseline to beat once Milestone 7 lands, not a bug in the test.)
+- [x] Review score consistency across sessions. (`test_score_consistency_across_repeated_runs`; also caught and fixed a real bug where `JobSearchAgent`/`ResumeAndRoleAnalyzer` treated *any* vector-memory search result as a "memory hit" with no similarity threshold.)
+- [x] Use logs/traces to confirm tool choice, memory retrieval, cache reuse, and feedback loops. (`test_tool_trace_confirms_memory_and_feedback_loops` dispatches real `ToolRequest`s and asserts on the returned `decision`/`metadata`, confirming semantic-cache reuse and the evaluator -> devils_advocate routing actually fire.)
+
+Run all with `python tests/run_devils_advocate_tests.py`, `python tests/run_e2e_flask_tests.py`, `python tests/run_evaluation_harness_tests.py` (requires `pip install -r requirements-dev.txt`). `run_llm_client_tests.py` and `run_llm_agent_integration_tests.py` (Milestone 7) live alongside these and use a mocked Anthropic client, so they also require no real API key.
+
+## Phase 2: Production Readiness
+
+### Milestone 7: Real LLM Integration
+
+Highest priority — everything after this is polish until the agents are backed by real model calls instead of scripted heuristics.
+
+- [x] Add environment/config loading for `ANTHROPIC_API_KEY` (e.g. `python-dotenv` or `os.environ`); never hardcode the key. (`core/llm_client.py` loads `.env` via `python-dotenv`; see `.env.example`.)
+- [x] Replace the deterministic logic in the 7 primary agents with Anthropic API calls that render the existing templates in `prompts/agent_prompt_templates.py`. (Each of `JobSearchAgent`, `ResumeAndRoleAnalyzer`, `QuestionGenerator`, `Evaluator`, `DevilsAdvocate`, `Interviewer`, `CareerCoach` now has a `_run_llm` path used whenever `llm_client.is_configured()`.)
+- [x] Enforce structured/JSON output from the LLM (tool-use or schema validation) so payload shapes stay compatible with what `main.py` and the frontends expect. (`core/llm_client.call_structured()` forces `tool_choice` and validates required fields.)
+- [x] Add validation-and-retry when an LLM response doesn't match the expected schema. (`call_structured()` retries up to `SCHEMA_RETRY_LIMIT` times on missing required fields or API errors before raising `LLMCallError`.)
+- [x] Add basic prompt-injection guarding: treat `resume_text`/`job_description` as untrusted data, not instructions, when building prompts. (`llm_client.wrap_untrusted_content()`, used for every piece of user-supplied text sent to the model.)
+- [x] Fix `CareerCoach.run()` ([agents/CareerCoach.py](agents/CareerCoach.py)) to use the shared `GLOBAL_VECTOR_MEMORY`/`GLOBAL_MEMORY_LOCK` from `main.py` instead of constructing its own `GlobalVectorMemory()` instance, which risks clobbering concurrent writes. (Done in Milestone 3.)
+- [x] Add a fallback/circuit-breaker path (clear user-facing error) if the Anthropic call fails or times out repeatedly. (Every agent's `run()` catches `LLMNotConfiguredError`/`LLMCallError`/any exception from `_run_llm` and falls back to its heuristic implementation, so a request never fails outright just because the LLM call did.)
+
+Verified via `tests/run_llm_client_tests.py` (mocked-client plumbing: retry, missing-key, prompt-injection fencing), `tests/run_llm_agent_integration_tests.py` (mocked-client, one test per agent proving the real `_run_llm` path end-to-end), and a handful of live calls against the real API with a configured key (which also caught and fixed an unconstrained `seniority_level` schema field returning verbose text instead of the canonical label `QuestionGenerator` expects).
+
+A real `ANTHROPIC_API_KEY` is now configured in `.env`. Once it was present, `tests/run_devils_advocate_tests.py`, `tests/run_e2e_flask_tests.py`, and `tests/run_evaluation_harness_tests.py` (all written pre-Milestone-7 to test the deterministic heuristic path) started silently calling the real API instead - slow, costly, and non-deterministic against their hardcoded heuristic expectations. Fixed by adding an autouse `monkeypatch.delenv("ANTHROPIC_API_KEY")` fixture to each, so they always exercise the heuristic fallback regardless of environment state; the real LLM path stays covered by the two LLM-specific test files above.
+
+### Milestone 8: Cost and Abuse Guardrails
+
+- [x] Add rate limiting to `/sessions` and `/answers` (e.g. `flask-limiter`); add the dependency to `requirements.txt`. (`backend/app.py`; defaults `MOGBOT_SESSION_RATE_LIMIT=10 per hour`, `MOGBOT_ANSWER_RATE_LIMIT=60 per hour`, both env-overridable. In-memory storage - fine for one process, needs Redis once Milestone 10 scales past a single worker.)
+- [x] Add input length/character caps on `job_description` and `resume_text`, not just `max_questions`. (`main.py`: `MAX_INPUT_CHARS` for job_description/resume_text, `MAX_ANSWER_CHARS` for answers, both env-overridable; return 400 over the cap.)
+- [x] Add basic usage/cost logging so a spend spike is visible before it becomes a surprise bill. (`core/llm_client.py` tracks per-model call count and input/output tokens in-process; exposed via `GET /usage`.)
+
+Verified in `tests/run_e2e_flask_tests.py`: oversized-input rejection (3 tests), rate-limit enforcement on both endpoints (2 tests, using a `create_app(session_rate_limit=..., answer_rate_limit=...)` override so the test doesn't need to fire dozens of real requests), and the `/usage` endpoint shape.
+
+### Milestone 9: Session Persistence
+
+- [x] Replace the in-memory `MogBotFloorManager._sessions` dict in `main.py` with SQLite-backed storage so a server restart doesn't wipe in-progress interviews. (`core/session_store.py`'s `SQLiteSessionStore`; `MogBotFloorManager` uses it by default. DB path configurable via `MOGBOT_SESSIONS_DB`, defaults to `data/sessions.db`.)
+- [x] Move `data/vector_db/records.json` (or its replacement) onto persistent storage so cache/memory doesn't silently reset on redeploy to an ephemeral filesystem. (`GlobalVectorMemory`'s storage dir is now configurable via `MOGBOT_VECTOR_DB_DIR` in `main.py`, so a deployment can point both this and `MOGBOT_SESSIONS_DB` at a mounted persistent volume. The underlying ephemeral-filesystem problem is infra, not code - see Milestone 10.)
+
+Verified in `tests/run_session_persistence_tests.py`: a session started by one `MogBotFloorManager` instance is readable *and* answerable by a second, independently-constructed instance pointed at the same SQLite file - the actual restart-survival guarantee, not just that the store class works in isolation.
+
+### Milestone 10: Backend Deployment
+
+- [ ] Swap Flask's dev server (`flask_app.run(...)`) for a production WSGI server (gunicorn/waitress) as the deploy entrypoint.
+- [ ] Host Flask (Render/Railway/Fly.io free tier is fine for this traffic) with `ANTHROPIC_API_KEY` as an environment variable, never in code.
+- [ ] Tighten CORS from `Access-Control-Allow-Origin: *` ([backend/app.py](backend/app.py)) to the deployed frontend's exact origin.
+
+### Milestone 11: Frontend Deployment
+
+- [ ] Push `web/` to a static host (Netlify/Vercel/GitHub Pages all work since it's plain files).
+- [ ] Set `<meta name="mogbot-api-base">` to the deployed backend URL.
+- [ ] Confirm CORS actually allows that deployed frontend origin.
+
+### Milestone 12: End-to-End Live Verification
+
+- [ ] Run the full interview flow against the real deployed URLs, not localhost.
+- [ ] Check how the UI holds up under real LLM latency (a few seconds per question/eval instead of instant); add loading states if needed.
+- [ ] Confirm rate limiting, input caps, and persistence all behave correctly on a live pass.

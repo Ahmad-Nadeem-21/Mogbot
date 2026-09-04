@@ -9,6 +9,7 @@ Ahmad Nadeem
 
 from __future__ import annotations
 
+import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.agent_runtime import AgentRunFunction, failure_agent_message, spawn_agent_worker
 from core.cache_manager import SemanticCache
 from core.prompt_manager import PromptManager
+from core.session_store import SQLiteSessionStore
 from core.vector_memory import GlobalVectorMemory
 from core.schemas import (
     AgentDecision,
@@ -63,10 +65,16 @@ __all__ = [
     "start_flask_server",
 ]
 
-GLOBAL_VECTOR_MEMORY = GlobalVectorMemory()
+GLOBAL_VECTOR_MEMORY = GlobalVectorMemory(os.environ.get("MOGBOT_VECTOR_DB_DIR", "data/vector_db"))
 GLOBAL_MEMORY_LOCK = RLock()
 PROMPT_MANAGER = PromptManager()
 SEMANTIC_CACHE = SemanticCache(GLOBAL_VECTOR_MEMORY)
+
+# Milestone 8 cost guardrail: bound the size of user-supplied text that gets
+# sent to the LLM. job_description/resume_text are full documents; answers
+# are conversational and should be much shorter.
+MAX_INPUT_CHARS = int(os.environ.get("MOGBOT_MAX_INPUT_CHARS", "20000"))
+MAX_ANSWER_CHARS = int(os.environ.get("MOGBOT_MAX_ANSWER_CHARS", "5000"))
 
 
 def create_session_state(session_id: str) -> SessionState:
@@ -180,7 +188,7 @@ def _resume_analyzer_runner(request: ToolRequest) -> AgentMessage:
     payload = request.get("payload", {})
     if isinstance(payload, dict) and "job_research" in payload:
         data["job_research"] = payload["job_research"]
-    result = ResumeAndRoleAnalyzer.run(data)
+    result = ResumeAndRoleAnalyzer.run(data, vector_memory=GLOBAL_VECTOR_MEMORY)
     return _normalize_agent_message(
         result,
         request,
@@ -197,6 +205,7 @@ def _question_generator_runner(request: ToolRequest) -> AgentMessage:
         payload.get("job_research", {}) if isinstance(payload, dict) else {},
         payload.get("candidate_profile", {}) if isinstance(payload, dict) else {},
         session_context.get("session_state", session_context),
+        vector_memory=GLOBAL_VECTOR_MEMORY,
     )
     return _normalize_agent_message(
         result,
@@ -217,7 +226,11 @@ def _evaluator_runner(request: ToolRequest) -> AgentMessage:
         "question": latest_turn.get("question", question_text),
         "question_id": current_question.get("id", latest_turn.get("question_id", "")),
     }
-    result = Evaluator.run(user_response, session_context=request.get("session_context", {}))
+    result = Evaluator.run(
+        user_response,
+        session_context=request.get("session_context", {}),
+        vector_memory=GLOBAL_VECTOR_MEMORY,
+    )
     message = _normalize_agent_message(
         result,
         request,
@@ -247,6 +260,7 @@ def _devils_advocate_runner(request: ToolRequest) -> AgentMessage:
     result = DevilsAdvocate.run(
         evaluation_result,
         session_context.get("conversation_history", []),
+        vector_memory=GLOBAL_VECTOR_MEMORY,
     )
     return _normalize_agent_message(
         result,
@@ -274,7 +288,12 @@ def _career_coach_runner(request: ToolRequest) -> AgentMessage:
     """Adapter: run CareerCoach with SessionState payload."""
     payload = request.get("payload", {})
     session_state = payload.get("session_state", {}) if isinstance(payload, dict) else {}
-    return CareerCoach.run(session_state)
+    return CareerCoach.run(
+        session_state,
+        vector_memory=GLOBAL_VECTOR_MEMORY,
+        cache=SEMANTIC_CACHE,
+        prompt_manager=PROMPT_MANAGER,
+    )
 
 
 register_agent("job_search", _job_search_runner)
@@ -651,13 +670,11 @@ def _session_response(record: Dict[str, Any], *, feedback: Optional[Dict[str, An
 class MogBotFloorManager:
     """Owns HTTP-facing session state while delegating agent work through main.py."""
 
-    def __init__(self) -> None:
-        self._sessions: Dict[str, Dict[str, Any]] = {}
-        self._sessions_lock = RLock()
+    def __init__(self, session_store: Optional[SQLiteSessionStore] = None) -> None:
+        self._sessions = session_store if session_store is not None else SQLiteSessionStore()
 
     def _get_record(self, session_id: str) -> Optional[Dict[str, Any]]:
-        with self._sessions_lock:
-            return self._sessions.get(session_id)
+        return self._sessions.get(session_id)
 
     def health(self) -> Dict[str, str]:
         return {"status": "ok"}
@@ -677,6 +694,16 @@ class MogBotFloorManager:
     def start_session(self, data: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         job_description = str(data.get("job_description", ""))
         resume_text = str(data.get("resume_text", ""))
+        if len(job_description) > MAX_INPUT_CHARS:
+            return (
+                {"error": f"job_description exceeds the {MAX_INPUT_CHARS}-character limit."},
+                400,
+            )
+        if len(resume_text) > MAX_INPUT_CHARS:
+            return (
+                {"error": f"resume_text exceeds the {MAX_INPUT_CHARS}-character limit."},
+                400,
+            )
         max_questions = int(data.get("max_questions", 5) or 5)
         max_questions = max(1, min(max_questions, 20))
 
@@ -749,8 +776,7 @@ class MogBotFloorManager:
             "current_index": 0,
             "max_questions": max_questions,
         }
-        with self._sessions_lock:
-            self._sessions[session_id] = record
+        self._sessions.set(session_id, record)
         return _session_response(record), 200
 
     def submit_answer(self, session_id: str, data: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
@@ -763,6 +789,8 @@ class MogBotFloorManager:
             return {"error": "Interview is already complete"}, 409
 
         answer_text = str(data.get("answer_text", ""))
+        if len(answer_text) > MAX_ANSWER_CHARS:
+            return {"error": f"answer_text exceeds the {MAX_ANSWER_CHARS}-character limit."}, 400
         state = record["state"]
         current_question = questions[current_index]
         turn = {
@@ -772,6 +800,13 @@ class MogBotFloorManager:
             "answered_at": _utc_now(),
         }
         state.setdefault("conversation_history", []).append(turn)
+        _safe_memory_add({
+            "record_id": f"turn-{session_id}-{current_index}",
+            "session_id": session_id,
+            "namespace": "conversation",
+            "text": f"Q: {turn['question']}\nA: {turn['answer_text']}",
+            "metadata": turn,
+        })
 
         eval_msg = dispatch_tool_request(
             _build_tool_request(
@@ -789,6 +824,18 @@ class MogBotFloorManager:
         )
         evaluation = eval_msg.get("payload", {})
         state.setdefault("evaluation_scores", []).append(evaluation)
+
+        if float(evaluation.get("confidence", 1.0)) < 0.6:
+            review_msg = dispatch_tool_request(
+                _build_tool_request(
+                    session_id=session_id,
+                    target_agent="helper_expert_review",
+                    task_type="review_output",
+                    payload={"agent_output": eval_msg},
+                    session_context={"session_state": state},
+                )
+            )
+            state.setdefault("helper_reviews", []).append(review_msg.get("payload", {}))
 
         challenge = None
         if evaluation.get("needs_followup"):
@@ -826,8 +873,7 @@ class MogBotFloorManager:
         else:
             state["current_question"] = questions[record["current_index"]]
 
-        with self._sessions_lock:
-            self._sessions[session_id] = record
+        self._sessions.set(session_id, record)
         return _session_response(record, feedback=feedback), 200
 
 
