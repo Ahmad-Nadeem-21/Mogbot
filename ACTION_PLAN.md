@@ -462,15 +462,15 @@ Verified in `tests/run_session_persistence_tests.py`: a session started by one `
 
 ### Milestone 10: Backend Deployment
 
-- [ ] Swap Flask's dev server (`flask_app.run(...)`) for a production WSGI server (gunicorn/waitress) as the deploy entrypoint.
+- [x] Swap Flask's dev server (`flask_app.run(...)`) for a production WSGI server (gunicorn/waitress) as the deploy entrypoint. (`wsgi.py` exposes `app` for `gunicorn wsgi:app`; `Procfile` runs it with `--workers 1 --threads 4` - one process so `flask_limiter`'s in-memory rate-limit counters stay global instead of splitting per worker, threads for concurrency since each request is I/O-bound waiting on the Anthropic API. `python main.py` stays for local dev only.)
 - [ ] Host Flask (Render/Railway/Fly.io free tier is fine for this traffic) with `ANTHROPIC_API_KEY` as an environment variable, never in code.
-- [ ] Tighten CORS from `Access-Control-Allow-Origin: *` ([backend/app.py](backend/app.py)) to the deployed frontend's exact origin.
+- [x] Make CORS configurable instead of a hardcoded `*`. (`MOGBOT_ALLOWED_ORIGIN` env var in [backend/app.py](backend/app.py), defaults to `*` for local dev.) Actually setting it to the deployed frontend's exact origin still needs that origin to exist first - see Milestone 11.
 
 ### Milestone 11: Frontend Deployment
 
 - [ ] Push `web/` to a static host (Netlify/Vercel/GitHub Pages all work since it's plain files).
 - [ ] Set `<meta name="mogbot-api-base">` to the deployed backend URL.
-- [ ] Confirm CORS actually allows that deployed frontend origin.
+- [ ] Set `MOGBOT_ALLOWED_ORIGIN` on the backend to the deployed frontend's exact origin and confirm CORS allows it.
 
 ### Milestone 12: End-to-End Live Verification
 

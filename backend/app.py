@@ -18,6 +18,11 @@ from core import llm_client
 SESSION_RATE_LIMIT = os.environ.get("MOGBOT_SESSION_RATE_LIMIT", "10 per hour")
 ANSWER_RATE_LIMIT = os.environ.get("MOGBOT_ANSWER_RATE_LIMIT", "60 per hour")
 
+# Defaults to "*" for local dev. Set to the deployed frontend's exact origin
+# (e.g. "https://mogbot.netlify.app") once it's known - see ACTION_PLAN.md
+# Milestone 10.
+ALLOWED_ORIGIN = os.environ.get("MOGBOT_ALLOWED_ORIGIN", "*")
+
 
 def _request_json() -> Dict[str, Any]:
     data = request.get_json(silent=True)
@@ -50,7 +55,7 @@ def create_app(
 
     @app.after_request
     def add_cors_headers(response):
-        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
         return response
