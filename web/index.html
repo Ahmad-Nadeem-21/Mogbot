@@ -54,7 +54,7 @@
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8h9M8.5 4l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </a>
             </div>
-            <p class="hero-note">Nothing you paste is stored beyond this session.</p>
+            <p class="hero-note">Your session is saved so you can pick up where you left off — see the <a href="privacy.html">privacy policy</a> for what's stored and where it goes.</p>
           </div>
 
           <div class="hero-visual" aria-hidden="true">
@@ -158,6 +158,7 @@
                 </div>
 
                 <p id="setupError" class="alert alert-error" role="alert" hidden></p>
+                <p id="setupLoadingNote" class="loading-note" aria-live="polite" hidden>Reading the role and your background — this can take up to 30 seconds.</p>
 
                 <div class="form-actions">
                   <button type="button" id="clearDraftButton" class="button ghost">Clear</button>
@@ -185,6 +186,7 @@
                 </div>
 
                 <div id="feedbackPanel" class="alert alert-feedback" aria-live="polite" hidden></div>
+                <p id="answerLoadingNote" class="loading-note" aria-live="polite" hidden>Scoring your answer — this can take up to 20 seconds.</p>
 
                 <div class="form-actions">
                   <button type="button" id="backButton" class="button ghost">Back to setup</button>
@@ -210,10 +212,14 @@
 
     <footer class="site-footer">
       <div class="wrap footer-row">
-        <p>Built by Shazaib Dawood, Zaid Haidry, and Ahmad Nadeem.</p>
+        <nav class="footer-links" aria-label="Legal">
+          <a href="privacy.html">Privacy</a>
+          <a href="terms.html">Terms</a>
+        </nav>
       </div>
     </footer>
 
+    <script src="logic.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

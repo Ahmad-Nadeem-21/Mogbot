@@ -1,20 +1,9 @@
 const storageKey = "mogbot_web_state";
 
-function resolveApiBase() {
-  const meta = document.querySelector('meta[name="mogbot-api-base"]');
-  const configured = meta && meta.content ? meta.content.trim() : "";
-  if (configured) return configured.replace(/\/$/, "");
-
-  const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-  if (isLocal) return "http://127.0.0.1:5000";
-
-  // No explicit backend configured for this deployment. Requests will be
-  // same-origin; set <meta name="mogbot-api-base" content="https://..."> at
-  // deploy time if the API is hosted on a different origin.
-  return "";
-}
-
-const apiBase = resolveApiBase();
+const apiBase = MogBotLogic.resolveApiBase(
+  document.querySelector('meta[name="mogbot-api-base"]')?.content,
+  window.location.hostname
+);
 
 const elements = {
   setupView: document.getElementById("setupView"),
@@ -25,6 +14,8 @@ const elements = {
   jobDescription: document.getElementById("jobDescription"),
   resumeText: document.getElementById("resumeText"),
   setupError: document.getElementById("setupError"),
+  setupLoadingNote: document.getElementById("setupLoadingNote"),
+  answerLoadingNote: document.getElementById("answerLoadingNote"),
   startButton: document.getElementById("startButton"),
   clearDraftButton: document.getElementById("clearDraftButton"),
   backButton: document.getElementById("backButton"),
@@ -135,8 +126,7 @@ function setView(viewName) {
   elements.interviewView.classList.toggle("is-active", viewName === "interview");
   elements.summaryView.classList.toggle("is-active", viewName === "summary");
 
-  const stepOrder = ["setup", "interview", "report"];
-  const activeIndex = stepOrder.indexOf(viewName === "summary" ? "report" : viewName);
+  const activeIndex = MogBotLogic.stepIndexForView(viewName);
   elements.stepper.querySelectorAll("li").forEach((li, index) => {
     li.classList.toggle("is-current", index === activeIndex);
     li.classList.toggle("is-done", index < activeIndex);
@@ -147,11 +137,12 @@ function setView(viewName) {
   }
 }
 
-function setButtonLoading(button, isLoading) {
+function setButtonLoading(button, isLoading, loadingNote) {
   button.disabled = isLoading;
   button.querySelector(".button-label").hidden = isLoading;
   button.querySelector(".spinner").hidden = !isLoading;
   button.setAttribute("aria-busy", String(isLoading));
+  if (loadingNote) loadingNote.hidden = !isLoading;
 }
 
 function showAlert(element, message) {
@@ -190,32 +181,13 @@ async function apiFetch(path, options = {}) {
   return data;
 }
 
-function validateSetup() {
-  const job = elements.jobDescription.value.trim();
-  const resume = elements.resumeText.value.trim();
-
-  if (!job) return { message: "Paste a job description before starting.", field: elements.jobDescription };
-  if (!resume) return { message: "Paste resume text before starting.", field: elements.resumeText };
-  return null;
-}
-
-function applySessionResponse(data) {
-  state.sessionId = data.session_id || state.sessionId;
-  state.roleFocus = data.role_focus || [];
-  state.currentQuestion = data.current_question || null;
-  state.progress = data.progress || state.progress;
-  state.feedback = data.feedback || null;
-  state.summary = data.summary || null;
-  state.completed = data.status === "completed";
-}
-
 async function startInterview(event) {
   event.preventDefault();
 
-  const invalid = validateSetup();
+  const invalid = MogBotLogic.validateSetupInputs(elements.jobDescription.value, elements.resumeText.value);
   if (invalid) {
     showAlert(elements.setupError, invalid.message);
-    invalid.field.focus();
+    (invalid.field === "job" ? elements.jobDescription : elements.resumeText).focus();
     return;
   }
   hideAlert(elements.setupError);
@@ -226,7 +198,7 @@ async function startInterview(event) {
   state.summary = null;
   state.completed = false;
 
-  setButtonLoading(elements.startButton, true);
+  setButtonLoading(elements.startButton, true, elements.setupLoadingNote);
   try {
     const data = await apiFetch("/sessions", {
       method: "POST",
@@ -237,13 +209,13 @@ async function startInterview(event) {
         max_questions: 5
       })
     });
-    applySessionResponse(data);
+    Object.assign(state, MogBotLogic.deriveSessionState(state, data));
     saveState();
     showInterview();
   } catch (err) {
     showAlert(elements.setupError, err.message);
   } finally {
-    setButtonLoading(elements.startButton, false);
+    setButtonLoading(elements.startButton, false, elements.setupLoadingNote);
   }
 }
 
@@ -254,42 +226,32 @@ function showInterview() {
 }
 
 function renderCurrentQuestion() {
-  const current = state.currentQuestion;
-  const currentNumber = current ? current.number || state.progress.current : state.progress.current;
-  const total = current ? current.total || state.progress.total : state.progress.total;
-
-  elements.progressPill.textContent = `Question ${currentNumber} of ${total}`;
-  elements.roleFocus.textContent = state.roleFocus.length
-    ? `Focus: ${state.roleFocus.join(", ")}`
-    : "Focus: role fit, experience, and communication";
-  elements.questionPanel.textContent = current ? current.text : "No active question.";
+  const view = MogBotLogic.deriveQuestionView(state);
+  elements.progressPill.textContent = view.pillText;
+  elements.roleFocus.textContent = view.roleFocusText;
+  elements.questionPanel.textContent = view.questionText;
   elements.answerText.value = "";
-  elements.submitAnswerButton.querySelector(".button-label").textContent =
-    currentNumber === total ? "Finish" : "Submit answer";
+  elements.submitAnswerButton.querySelector(".button-label").textContent = view.submitLabel;
 }
 
 function renderFeedback() {
-  const feedback = state.feedback;
-  if (!feedback || !feedback.evaluation) {
+  const view = MogBotLogic.deriveFeedbackView(state.feedback);
+  if (!view) {
     hideAlert(elements.feedbackPanel);
     return;
   }
 
-  const evaluation = feedback.evaluation;
-  const score = evaluation.overall_score ?? 0;
-  const comment = evaluation.evaluator_comment || "Answer evaluated.";
-  const challenge = feedback.challenge && feedback.challenge.challenge_question
-    ? ` Challenge: ${feedback.challenge.challenge_question}`
-    : "";
+  elements.feedbackPanel.textContent = "";
 
-  elements.feedbackPanel.innerHTML = `<strong>${score} / 100.</strong> ${escapeHtml(comment)}${challenge ? escapeHtml(challenge) : ""}`;
+  const scoreLine = document.createElement("strong");
+  scoreLine.textContent = `${view.score} / 100.`;
+  elements.feedbackPanel.append(scoreLine, ` ${view.comment}`);
+
+  if (view.challenge) {
+    elements.feedbackPanel.append(` Challenge: ${view.challenge}`);
+  }
+
   elements.feedbackPanel.hidden = false;
-}
-
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
 }
 
 async function submitAnswer(event) {
@@ -305,13 +267,13 @@ async function submitAnswer(event) {
     return;
   }
 
-  setButtonLoading(elements.submitAnswerButton, true);
+  setButtonLoading(elements.submitAnswerButton, true, elements.answerLoadingNote);
   try {
     const data = await apiFetch(`/sessions/${state.sessionId}/answers`, {
       method: "POST",
       body: JSON.stringify({ answer_text: answer })
     });
-    applySessionResponse(data);
+    Object.assign(state, MogBotLogic.deriveSessionState(state, data));
     saveState();
 
     if (state.completed) {
@@ -322,33 +284,27 @@ async function submitAnswer(event) {
   } catch (err) {
     showAlert(elements.feedbackPanel, err.message);
   } finally {
-    setButtonLoading(elements.submitAnswerButton, false);
+    setButtonLoading(elements.submitAnswerButton, false, elements.answerLoadingNote);
   }
 }
 
 function showSummary() {
   setView("summary");
-  elements.summaryPanel.innerHTML = "";
+  elements.summaryPanel.textContent = "";
 
-  const report = state.summary || {};
+  const view = MogBotLogic.deriveSummaryView(state.summary);
 
   const title = document.createElement("h3");
-  title.textContent = report.summary || "Interview complete.";
+  title.textContent = view.title;
   elements.summaryPanel.appendChild(title);
 
   const trend = document.createElement("p");
   trend.className = "trend";
-  trend.textContent = report.score_trends && report.score_trends.trend
-    ? `Score trend: ${report.score_trends.trend}.`
-    : "Score trend: not enough data yet.";
+  trend.textContent = view.trend;
   elements.summaryPanel.appendChild(trend);
 
-  const steps = Array.isArray(report.recommended_next_steps) && report.recommended_next_steps.length
-    ? report.recommended_next_steps
-    : ["Review your answers and add clearer examples with measurable outcomes."];
-
   const list = document.createElement("ul");
-  steps.forEach((item) => {
+  view.steps.forEach((item) => {
     const li = document.createElement("li");
     li.textContent = item;
     list.appendChild(li);
