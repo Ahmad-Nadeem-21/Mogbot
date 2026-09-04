@@ -78,6 +78,16 @@ def is_configured() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
+# The SDK's own default (10 minutes) is far too long for a request in the
+# critical path of a user-facing HTTP call: a slow/hung network path would
+# make every agent's designed fallback-to-heuristic behavior (see module
+# docstring) effectively unreachable, since nothing has failed yet for the
+# agent to catch. Bound each attempt so a bad network path fails fast enough
+# for the fallback to actually kick in, and for the deploy's WSGI timeout
+# (see Procfile) to never need to kill the worker first.
+REQUEST_TIMEOUT_SECONDS = float(os.environ.get("ANTHROPIC_TIMEOUT_SECONDS", "30"))
+
+
 def _get_client():
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -86,7 +96,7 @@ def _get_client():
         )
     import anthropic  # imported lazily so the package is only required once a key is actually used
 
-    return anthropic.Anthropic(api_key=api_key)
+    return anthropic.Anthropic(api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS)
 
 
 def wrap_untrusted_content(label: str, text: str) -> str:
