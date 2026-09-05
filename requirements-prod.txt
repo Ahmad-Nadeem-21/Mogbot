@@ -1,0 +1,4 @@
+-r requirements.txt
+# gunicorn relies on fcntl/os.fork and does not run on Windows, so it's kept
+# out of the shared requirements.txt used for local Windows dev.
+gunicorn

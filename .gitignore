@@ -24,3 +24,15 @@ traces/
 *.resume.pdf
 *.transcript.json
 *.local.json
+
+# Terraform (terraform/README.md - state can contain the generated SSH
+# private key in plaintext; never commit it)
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+terraform/*.tfvars.json
+terraform/crash.log
+terraform/override.tf
+terraform/override.tf.json
+!terraform/.terraform.lock.hcl

@@ -462,14 +462,14 @@ Verified in `tests/run_session_persistence_tests.py`: a session started by one `
 
 ### Milestone 10: Backend Deployment
 
-- [ ] Swap Flask's dev server (`flask_app.run(...)`) for a production WSGI server (gunicorn/waitress) as the deploy entrypoint.
-- [ ] Host Flask (Render/Railway/Fly.io free tier is fine for this traffic) with `ANTHROPIC_API_KEY` as an environment variable, never in code.
-- [ ] Tighten CORS from `Access-Control-Allow-Origin: *` ([backend/app.py](backend/app.py)) to the deployed frontend's exact origin.
+- [x] Swap Flask's dev server (`flask_app.run(...)`) for a production WSGI server (gunicorn/waitress) as the deploy entrypoint. (`backend/wsgi.py` exposes the Flask app as a gunicorn target; `requirements-prod.txt` adds `gunicorn` as a Linux-only prod dependency, kept out of the shared `requirements.txt` since gunicorn doesn't run on Windows.)
+- [ ] Host Flask with `ANTHROPIC_API_KEY` as an environment variable, never in code. **Terraform stack ready in `terraform/`** (AWS: Lightsail + CloudFront) - see `terraform/README.md`. Not yet applied against a real AWS account; Render/Railway/Fly.io free tier remains a valid lighter-weight alternative if you'd rather skip AWS/Terraform entirely.
+- [x] Tighten CORS from `Access-Control-Allow-Origin: *` ([backend/app.py](backend/app.py)) to the deployed frontend's exact origin. (Now reads `MOGBOT_ALLOWED_ORIGIN`, defaulting to `*` for local dev; the Terraform path sets it via the systemd `.env` once the frontend URL is known.)
 
 ### Milestone 11: Frontend Deployment
 
-- [ ] Push `web/` to a static host (Netlify/Vercel/GitHub Pages all work since it's plain files).
-- [ ] Set `<meta name="mogbot-api-base">` to the deployed backend URL.
+- [ ] Push `web/` to a static host (Netlify/Vercel/GitHub Pages all work since it's plain files). **Terraform stack ready in `terraform/`** (AWS: private S3 + CloudFront via OAC) - `terraform/scripts/deploy_frontend.sh` syncs `web/` and invalidates the cache. Not yet applied.
+- [ ] Set `<meta name="mogbot-api-base">` to the deployed backend URL. (Automated by `deploy_frontend.sh` for the AWS path - it patches a build-time copy, not your working tree.)
 - [ ] Confirm CORS actually allows that deployed frontend origin.
 
 ### Milestone 12: End-to-End Live Verification

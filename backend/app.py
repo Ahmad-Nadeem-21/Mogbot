@@ -11,6 +11,10 @@ from flask_limiter.util import get_remote_address
 
 from core import llm_client
 
+# Milestone 10: tighten this to the deployed frontend's exact origin via
+# env var once one exists; "*" stays the default for local dev.
+ALLOWED_ORIGIN = os.environ.get("MOGBOT_ALLOWED_ORIGIN", "*")
+
 # Each POST /sessions triggers job_search + resume_analyzer + question_generator
 # (up to 3 LLM calls); each POST /sessions/<id>/answers triggers evaluator and
 # sometimes devils_advocate/helper review (up to 3 more). These defaults are
@@ -50,7 +54,7 @@ def create_app(
 
     @app.after_request
     def add_cors_headers(response):
-        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
         return response
