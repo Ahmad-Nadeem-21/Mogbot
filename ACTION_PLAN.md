@@ -462,15 +462,15 @@ Verified in `tests/run_session_persistence_tests.py`: a session started by one `
 
 ### Milestone 10: Backend Deployment
 
-- [x] Swap Flask's dev server (`flask_app.run(...)`) for a production WSGI server (gunicorn/waitress) as the deploy entrypoint. (`backend/wsgi.py` exposes the Flask app as a gunicorn target; `requirements-prod.txt` adds `gunicorn` as a Linux-only prod dependency, kept out of the shared `requirements.txt` since gunicorn doesn't run on Windows.)
-- [ ] Host Flask with `ANTHROPIC_API_KEY` as an environment variable, never in code. **Terraform stack ready in `terraform/`** (AWS: Lightsail + CloudFront) - see `terraform/README.md`. Not yet applied against a real AWS account; Render/Railway/Fly.io free tier remains a valid lighter-weight alternative if you'd rather skip AWS/Terraform entirely.
-- [x] Tighten CORS from `Access-Control-Allow-Origin: *` ([backend/app.py](backend/app.py)) to the deployed frontend's exact origin. (Now reads `MOGBOT_ALLOWED_ORIGIN`, defaulting to `*` for local dev; the Terraform path sets it via the systemd `.env` once the frontend URL is known.)
+- [x] Swap Flask's dev server (`flask_app.run(...)`) for a production WSGI server (gunicorn/waitress) as the deploy entrypoint. (`wsgi.py` exposes `app` for `gunicorn wsgi:app`; `Procfile` runs it with `--workers 1 --threads 4` - one process so `flask_limiter`'s in-memory rate-limit counters stay global instead of splitting per worker, threads for concurrency since each request is I/O-bound waiting on the Anthropic API. `python main.py` stays for local dev only. `gunicorn` is Linux/macOS-only - confirmed it fails at import with `ModuleNotFoundError: No module named 'fcntl'` the moment it's actually run on Windows, even though `pip install` succeeds there, so don't try to run the Procfile command locally on Windows.)
+- [ ] Host Flask with `ANTHROPIC_API_KEY` as an environment variable, never in code. Two ready paths: Render/Railway/Fly.io free tier (matches the `Procfile` convention directly), or the **Terraform stack in `terraform/`** (AWS: Lightsail + CloudFront) - see `terraform/README.md`. Neither has been applied against a real account yet; pick one.
+- [x] Make CORS configurable instead of a hardcoded `*`. (`MOGBOT_ALLOWED_ORIGIN` env var in [backend/app.py](backend/app.py), defaults to `*` for local dev.) Actually setting it to the deployed frontend's exact origin still needs that origin to exist first - see Milestone 11.
 
 ### Milestone 11: Frontend Deployment
 
-- [ ] Push `web/` to a static host (Netlify/Vercel/GitHub Pages all work since it's plain files). **Terraform stack ready in `terraform/`** (AWS: private S3 + CloudFront via OAC) - `terraform/scripts/deploy_frontend.sh` syncs `web/` and invalidates the cache. Not yet applied.
-- [ ] Set `<meta name="mogbot-api-base">` to the deployed backend URL. (Automated by `deploy_frontend.sh` for the AWS path - it patches a build-time copy, not your working tree.)
-- [ ] Confirm CORS actually allows that deployed frontend origin.
+- [ ] Push `web/` to a static host (Netlify/Vercel/GitHub Pages all work since it's plain files), or the **Terraform stack in `terraform/`** (AWS: private S3 + CloudFront via OAC) - `terraform/scripts/deploy_frontend.sh` syncs `web/` and invalidates the cache automatically. Not yet applied either way.
+- [ ] Set `<meta name="mogbot-api-base">` to the deployed backend URL. (Automated by `terraform/scripts/deploy_frontend.sh` for the AWS path - it patches a build-time copy, not your working tree.)
+- [ ] Set `MOGBOT_ALLOWED_ORIGIN` on the backend to the deployed frontend's exact origin and confirm CORS allows it.
 
 ### Milestone 12: End-to-End Live Verification
 

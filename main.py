@@ -70,6 +70,16 @@ GLOBAL_MEMORY_LOCK = RLock()
 PROMPT_MANAGER = PromptManager()
 SEMANTIC_CACHE = SemanticCache(GLOBAL_VECTOR_MEMORY)
 
+# Cache only task types whose result doesn't depend on session state (a job
+# posting or resume, alone, genuinely repeats across users). Every other
+# task type folds in the current question/answer/conversation history, and
+# GlobalVectorMemory's similarity match isn't session-scoped - caching those
+# let one session's cached question and evaluation get served back to an
+# unrelated session with merely similar input, regardless of what the
+# candidate actually answered. Don't add a task type here without also
+# scoping the cache lookup by session_id.
+CACHEABLE_TASK_TYPES = {"research_job", "analyze_resume"}
+
 # Milestone 8 cost guardrail: bound the size of user-supplied text that gets
 # sent to the LLM. job_description/resume_text are full documents; answers
 # are conversational and should be much shorter.
@@ -362,7 +372,8 @@ def dispatch_tool_request(
 
     cache_type = request.get("task_type", "generic")
     cache_key = f"{target}:{request.get('payload', {})}"
-    cached_payload = SEMANTIC_CACHE.lookup(cache_type, cache_key)
+    cacheable = cache_type in CACHEABLE_TASK_TYPES
+    cached_payload = SEMANTIC_CACHE.lookup(cache_type, cache_key) if cacheable else None
     if cached_payload is not None:
         return {
             "schema_version": request.get("schema_version", "1.0"),
@@ -431,7 +442,7 @@ def dispatch_tool_request(
                         summary=f"Agent exceeded timeout of {run_timeout_seconds}s",
                         payload={"timeout_seconds": run_timeout_seconds},
                     )
-    if result.get("status") == "ok":
+    if cacheable and result.get("status") == "ok":
         SEMANTIC_CACHE.store(
             cache_type=cache_type,
             key_text=cache_key,

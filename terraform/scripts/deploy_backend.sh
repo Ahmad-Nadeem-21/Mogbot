@@ -29,7 +29,7 @@ rsync -az --delete \
   "$REPO_ROOT/" "ubuntu@$IP:/opt/mogbot/"
 
 echo "==> Installing dependencies on the instance"
-$SSH "cd /opt/mogbot && python3 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements-prod.txt"
+$SSH "cd /opt/mogbot && python3 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt"
 
 if $SSH "test -f /opt/mogbot/.env"; then
   echo "==> /opt/mogbot/.env already exists - leaving your ANTHROPIC_API_KEY as-is."

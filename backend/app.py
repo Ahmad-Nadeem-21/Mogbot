@@ -11,16 +11,17 @@ from flask_limiter.util import get_remote_address
 
 from core import llm_client
 
-# Milestone 10: tighten this to the deployed frontend's exact origin via
-# env var once one exists; "*" stays the default for local dev.
-ALLOWED_ORIGIN = os.environ.get("MOGBOT_ALLOWED_ORIGIN", "*")
-
 # Each POST /sessions triggers job_search + resume_analyzer + question_generator
 # (up to 3 LLM calls); each POST /sessions/<id>/answers triggers evaluator and
 # sometimes devils_advocate/helper review (up to 3 more). These defaults are
 # deliberately conservative - override via env vars per deployment.
 SESSION_RATE_LIMIT = os.environ.get("MOGBOT_SESSION_RATE_LIMIT", "10 per hour")
 ANSWER_RATE_LIMIT = os.environ.get("MOGBOT_ANSWER_RATE_LIMIT", "60 per hour")
+
+# Defaults to "*" for local dev. Set to the deployed frontend's exact origin
+# (e.g. "https://mogbot.netlify.app") once it's known - see ACTION_PLAN.md
+# Milestone 10.
+ALLOWED_ORIGIN = os.environ.get("MOGBOT_ALLOWED_ORIGIN", "*")
 
 
 def _request_json() -> Dict[str, Any]:
