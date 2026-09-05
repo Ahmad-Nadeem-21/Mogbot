@@ -1,0 +1,67 @@
+# Render Blueprint - deploys MogBot with one "New +" -> "Blueprint" pointed
+# at this repo, instead of clicking through the dashboard by hand.
+# https://render.com/docs/blueprint-spec
+#
+# The backend half of this is already live by hand at
+# https://mogbot-i1ts.onrender.com (see web/index.html's mogbot-api-base).
+# This file exists so that setup is reproducible/versioned, and adds the
+# frontend as a second service - Milestone 11 is still open otherwise.
+#
+# IMPORTANT - free-tier persistence caveat (see ACTION_PLAN.md Milestones 9
+# & 10): Render's free instance type does not support persistent disks, and
+# free web services spin down after ~15 minutes of inactivity. That means
+# `data/sessions.db` (SQLite sessions) and `data/vector_db/records.json`
+# (semantic cache/memory) reset on every redeploy AND on every spin-down/
+# wake cycle - not just on redeploy like the AWS/Terraform path. Fine for a
+# demo; if you need sessions to actually survive, either upgrade
+# mogbot-backend's `plan` below to a paid tier and uncomment the `disk:`
+# block, or swap SQLiteSessionStore for a managed Postgres (Render offers
+# one) - out of scope for this file.
+#
+# Two-pass deploy: MOGBOT_ALLOWED_ORIGIN below guesses the frontend's URL
+# before that service exists. Render service names can get suffixed if
+# taken (the existing hand-deployed backend is "mogbot-i1ts", not
+# "mogbot-backend"), so after the first deploy, check the frontend's real
+# URL and update MOGBOT_ALLOWED_ORIGIN (dashboard or this file + redeploy)
+# if it differs. This file has not been applied against a real Render
+# account - review it before using "New +" -> "Blueprint".
+
+services:
+  - type: web
+    name: mogbot-backend
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app --workers 1 --worker-class gthread --threads 4 --timeout 280
+    healthCheckPath: /health
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false # set manually in the Render dashboard - never in this file or git
+      - key: MOGBOT_ALLOWED_ORIGIN
+        value: https://mogbot-frontend.onrender.com # update if Render assigns a different name
+      - key: MOGBOT_SESSION_RATE_LIMIT
+        value: 10 per hour
+      - key: MOGBOT_ANSWER_RATE_LIMIT
+        value: 60 per hour
+      - key: MOGBOT_MAX_INPUT_CHARS
+        value: "20000"
+      - key: MOGBOT_MAX_ANSWER_CHARS
+        value: "5000"
+    # Uncomment on a paid plan (persistent disks aren't available on free):
+    # disk:
+    #   name: mogbot-data
+    #   mountPath: /opt/render/project/src/data
+    #   sizeGB: 1
+
+  - type: web
+    name: mogbot-frontend
+    runtime: static
+    buildCommand: ""
+    staticPublishPath: web
+    # popup.html-style multi-view page served from one index.html - fall
+    # back to it so a direct hit on any path still loads the app.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
