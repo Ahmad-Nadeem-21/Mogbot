@@ -662,6 +662,10 @@ textarea:focus {
   margin-top: 4px;
 }
 
+.loading-note[hidden] {
+  display: none;
+}
+
 .loading-note::before {
   content: "";
   width: 12px;
