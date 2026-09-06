@@ -85,10 +85,21 @@ class AgentWorker(Thread):
             attempt = 0
             result: AgentMessage
             while True:
+                # Deliberately not `with ThreadPoolExecutor(...) as pool:` -
+                # exiting that block calls shutdown(wait=True), which blocks
+                # until the submitted call actually finishes even after
+                # future.result(timeout=...) has already raised. That made
+                # this timeout cosmetic: a genuinely hung call (e.g. a slow
+                # network path to Anthropic) would still block this thread
+                # for however long the real call took, not run_timeout_seconds.
+                # shutdown(wait=False) lets a fresh pool per attempt clean up
+                # in the background whenever the hung thread eventually ends,
+                # instead of blocking - and a fresh pool (not a shared one)
+                # keeps one hung call from also blocking every later request.
+                pool = ThreadPoolExecutor(max_workers=1)
                 try:
-                    with ThreadPoolExecutor(max_workers=1) as pool:
-                        future = pool.submit(self.run_function, request)
-                        result = future.result(timeout=self.run_timeout_seconds)
+                    future = pool.submit(self.run_function, request)
+                    result = future.result(timeout=self.run_timeout_seconds)
                     break
                 except FuturesTimeout:
                     result = failure_agent_message(
@@ -116,6 +127,8 @@ class AgentWorker(Thread):
                         )
                         break
                     attempt += 1
+                finally:
+                    pool.shutdown(wait=False)
             self.output_queue.put(result)
             self.input_queue.task_done()
 

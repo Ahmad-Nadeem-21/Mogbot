@@ -429,19 +429,26 @@ def dispatch_tool_request(
         if run_timeout_seconds is None:
             result = runner(request)
         else:
-            with ThreadPoolExecutor(max_workers=1) as pool:
+            # Not `with ThreadPoolExecutor(...) as pool:` - see the identical
+            # fix + comment in core/agent_runtime.py's AgentWorker.run(): exiting
+            # that block calls shutdown(wait=True), which blocks on the
+            # submitted call finishing even after future.result(timeout=...)
+            # already raised, making the timeout cosmetic.
+            pool = ThreadPoolExecutor(max_workers=1)
+            try:
                 future = pool.submit(runner, request)
-                try:
-                    result = future.result(timeout=run_timeout_seconds)
-                except FuturesTimeout:
-                    return failure_agent_message(
-                        source_agent=target,
-                        request=request,
-                        message_type="timeout",
-                        status="error",
-                        summary=f"Agent exceeded timeout of {run_timeout_seconds}s",
-                        payload={"timeout_seconds": run_timeout_seconds},
-                    )
+                result = future.result(timeout=run_timeout_seconds)
+            except FuturesTimeout:
+                return failure_agent_message(
+                    source_agent=target,
+                    request=request,
+                    message_type="timeout",
+                    status="error",
+                    summary=f"Agent exceeded timeout of {run_timeout_seconds}s",
+                    payload={"timeout_seconds": run_timeout_seconds},
+                )
+            finally:
+                pool.shutdown(wait=False)
     if cacheable and result.get("status") == "ok":
         SEMANTIC_CACHE.store(
             cache_type=cache_type,
