@@ -7,12 +7,30 @@
 (function (global) {
   "use strict";
 
+  // Must match MAX_INPUT_CHARS in main.py (MOGBOT_MAX_INPUT_CHARS). Keeping
+  // this in sync client-side means an oversized paste fails immediately
+  // with a clear message instead of round-tripping to the server first for
+  // a JSON error blob shown verbatim.
+  const MAX_INPUT_CHARS = 20000;
+
   function validateSetupInputs(jobDescription, resumeText) {
     const job = (jobDescription || "").trim();
     const resume = (resumeText || "").trim();
 
     if (!job) return { field: "job", message: "Paste a job description before starting." };
     if (!resume) return { field: "resume", message: "Paste resume text before starting." };
+    if (job.length > MAX_INPUT_CHARS) {
+      return {
+        field: "job",
+        message: `Job description is too long (${job.length.toLocaleString()} characters, max ${MAX_INPUT_CHARS.toLocaleString()}). Trim it and try again.`
+      };
+    }
+    if (resume.length > MAX_INPUT_CHARS) {
+      return {
+        field: "resume",
+        message: `Resume is too long (${resume.length.toLocaleString()} characters, max ${MAX_INPUT_CHARS.toLocaleString()}). Trim it and try again.`
+      };
+    }
     return null;
   }
 

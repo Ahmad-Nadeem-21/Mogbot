@@ -23,6 +23,22 @@ test("validateSetupInputs passes when both fields have content", () => {
   assert.equal(logic.validateSetupInputs("Job text", "Resume text"), null);
 });
 
+test("validateSetupInputs rejects a job description over the character cap", () => {
+  const result = logic.validateSetupInputs("x".repeat(20001), "Resume text");
+  assert.equal(result.field, "job");
+  assert.match(result.message, /too long/);
+});
+
+test("validateSetupInputs rejects a resume over the character cap", () => {
+  const result = logic.validateSetupInputs("Job text", "x".repeat(20001));
+  assert.equal(result.field, "resume");
+  assert.match(result.message, /too long/);
+});
+
+test("validateSetupInputs passes at exactly the character cap", () => {
+  assert.equal(logic.validateSetupInputs("x".repeat(20000), "y".repeat(20000)), null);
+});
+
 test("deriveSessionState maps a running session response", () => {
   const previous = { sessionId: "", progress: { current: 1, total: 1 } };
   const data = {
