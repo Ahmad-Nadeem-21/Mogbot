@@ -413,60 +413,45 @@ def dispatch_tool_request(
         except ValueError:
             # Some helper templates may not define `system`; safe to continue.
             pass
-    worker_channels = AGENT_WORKER_CHANNELS.get(target)
-    if worker_channels:
-        in_queue, out_queue, _, _ = worker_channels
-        in_queue.put(request)
-        if run_timeout_seconds is None:
-            result = out_queue.get()
-        else:
-            try:
-                result = out_queue.get(timeout=run_timeout_seconds)
-            except Empty:
-                print(
-                    f"[dispatch_tool_request] target={target!r} via=worker_queue "
-                    f"elapsed={time.monotonic() - _dispatch_start:.1f}s result=CALLER_TIMEOUT "
-                    f"(waited {run_timeout_seconds}s on out_queue; the AgentWorker thread is "
-                    f"still running this request in the background)"
-                )
-                return failure_agent_message(
-                    source_agent=target,
-                    request=request,
-                    message_type="timeout",
-                    status="error",
-                    summary=f"Agent exceeded timeout of {run_timeout_seconds}s",
-                    payload={"timeout_seconds": run_timeout_seconds},
-                )
+    # Deliberately not routed through AGENT_WORKER_CHANNELS's persistent
+    # background AgentWorker threads: live on Render, both AgentWorker's own
+    # 120s timeout AND this function's 300s caller-side timeout fired with
+    # zero diagnostic output in between (confirmed via timing instrumentation
+    # - no "[AgentWorker:...]" line ever printed), meaning the long-lived
+    # background thread wasn't getting scheduled at all under that
+    # environment's threading/CPU constraints, not just running slowly. A
+    # fresh thread per call - the same pattern helper_* agents already used
+    # without this problem - doesn't depend on a pre-existing thread having
+    # been scheduled by the OS.
+    if run_timeout_seconds is None:
+        result = runner(request)
     else:
-        if run_timeout_seconds is None:
-            result = runner(request)
-        else:
-            # Not `with ThreadPoolExecutor(...) as pool:` - see the identical
-            # fix + comment in core/agent_runtime.py's AgentWorker.run(): exiting
-            # that block calls shutdown(wait=True), which blocks on the
-            # submitted call finishing even after future.result(timeout=...)
-            # already raised, making the timeout cosmetic.
-            pool = ThreadPoolExecutor(max_workers=1)
-            try:
-                future = pool.submit(runner, request)
-                result = future.result(timeout=run_timeout_seconds)
-            except FuturesTimeout:
-                print(
-                    f"[dispatch_tool_request] target={target!r} via=threadpool "
-                    f"elapsed={time.monotonic() - _dispatch_start:.1f}s result=CALLER_TIMEOUT "
-                    f"(waited {run_timeout_seconds}s; the submitted thread is still running "
-                    f"this request in the background)"
-                )
-                return failure_agent_message(
-                    source_agent=target,
-                    request=request,
-                    message_type="timeout",
-                    status="error",
-                    summary=f"Agent exceeded timeout of {run_timeout_seconds}s",
-                    payload={"timeout_seconds": run_timeout_seconds},
-                )
-            finally:
-                pool.shutdown(wait=False)
+        # Not `with ThreadPoolExecutor(...) as pool:` - see the identical
+        # fix + comment in core/agent_runtime.py's AgentWorker.run(): exiting
+        # that block calls shutdown(wait=True), which blocks on the
+        # submitted call finishing even after future.result(timeout=...)
+        # already raised, making the timeout cosmetic.
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = pool.submit(runner, request)
+            result = future.result(timeout=run_timeout_seconds)
+        except FuturesTimeout:
+            print(
+                f"[dispatch_tool_request] target={target!r} via=threadpool "
+                f"elapsed={time.monotonic() - _dispatch_start:.1f}s result=CALLER_TIMEOUT "
+                f"(waited {run_timeout_seconds}s; the submitted thread is still running "
+                f"this request in the background)"
+            )
+            return failure_agent_message(
+                source_agent=target,
+                request=request,
+                message_type="timeout",
+                status="error",
+                summary=f"Agent exceeded timeout of {run_timeout_seconds}s",
+                payload={"timeout_seconds": run_timeout_seconds},
+            )
+        finally:
+            pool.shutdown(wait=False)
     print(
         f"[dispatch_tool_request] target={target!r} "
         f"elapsed={time.monotonic() - _dispatch_start:.1f}s status={result.get('status')!r}"
