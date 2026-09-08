@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timezone
@@ -97,11 +98,21 @@ class AgentWorker(Thread):
                 # instead of blocking - and a fresh pool (not a shared one)
                 # keeps one hung call from also blocking every later request.
                 pool = ThreadPoolExecutor(max_workers=1)
+                _attempt_start = time.monotonic()
                 try:
                     future = pool.submit(self.run_function, request)
                     result = future.result(timeout=self.run_timeout_seconds)
+                    print(
+                        f"[AgentWorker:{self.name}] elapsed={time.monotonic() - _attempt_start:.1f}s "
+                        f"result=ok status={result.get('status')!r}"
+                    )
                     break
                 except FuturesTimeout:
+                    print(
+                        f"[AgentWorker:{self.name}] elapsed={time.monotonic() - _attempt_start:.1f}s "
+                        f"result=WORKER_TIMEOUT (waited {self.run_timeout_seconds}s; the submitted "
+                        f"thread is still running this request in the background)"
+                    )
                     result = failure_agent_message(
                         source_agent=self.name,
                         request=request,
@@ -112,6 +123,10 @@ class AgentWorker(Thread):
                     )
                     break
                 except Exception as exc:
+                    print(
+                        f"[AgentWorker:{self.name}] elapsed={time.monotonic() - _attempt_start:.1f}s "
+                        f"result=EXCEPTION {type(exc).__name__}: {exc}"
+                    )
                     if attempt >= self.retry_limit:
                         result = failure_agent_message(
                             source_agent=self.name,

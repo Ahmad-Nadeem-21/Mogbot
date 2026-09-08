@@ -10,6 +10,7 @@ Ahmad Nadeem
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timezone
@@ -359,6 +360,11 @@ def dispatch_tool_request(
 ) -> AgentMessage:
     """Call the registered run() for request['target_agent'] (optional wall-clock timeout)."""
     target = request.get("target_agent", "")
+    # Temporary diagnostic: pin down where request latency actually goes
+    # (network to Anthropic vs. worker-queue vs. something else entirely) on
+    # a deployed instance where we can't attach a debugger. Remove once the
+    # live-latency investigation is closed out.
+    _dispatch_start = time.monotonic()
     runner = AGENT_RUN_REGISTRY.get(target)
     if runner is None:
         return failure_agent_message(
@@ -417,6 +423,12 @@ def dispatch_tool_request(
             try:
                 result = out_queue.get(timeout=run_timeout_seconds)
             except Empty:
+                print(
+                    f"[dispatch_tool_request] target={target!r} via=worker_queue "
+                    f"elapsed={time.monotonic() - _dispatch_start:.1f}s result=CALLER_TIMEOUT "
+                    f"(waited {run_timeout_seconds}s on out_queue; the AgentWorker thread is "
+                    f"still running this request in the background)"
+                )
                 return failure_agent_message(
                     source_agent=target,
                     request=request,
@@ -439,6 +451,12 @@ def dispatch_tool_request(
                 future = pool.submit(runner, request)
                 result = future.result(timeout=run_timeout_seconds)
             except FuturesTimeout:
+                print(
+                    f"[dispatch_tool_request] target={target!r} via=threadpool "
+                    f"elapsed={time.monotonic() - _dispatch_start:.1f}s result=CALLER_TIMEOUT "
+                    f"(waited {run_timeout_seconds}s; the submitted thread is still running "
+                    f"this request in the background)"
+                )
                 return failure_agent_message(
                     source_agent=target,
                     request=request,
@@ -449,6 +467,10 @@ def dispatch_tool_request(
                 )
             finally:
                 pool.shutdown(wait=False)
+    print(
+        f"[dispatch_tool_request] target={target!r} "
+        f"elapsed={time.monotonic() - _dispatch_start:.1f}s status={result.get('status')!r}"
+    )
     if cacheable and result.get("status") == "ok":
         SEMANTIC_CACHE.store(
             cache_type=cache_type,
