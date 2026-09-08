@@ -96,7 +96,12 @@ def _get_client():
         )
     import anthropic  # imported lazily so the package is only required once a key is actually used
 
-    return anthropic.Anthropic(api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS)
+    # max_retries=0: call_structured() below already retries on any failure
+    # (SCHEMA_RETRY_LIMIT). Leaving the SDK's own default retries (2) on top
+    # of that nests two retry loops - worst case multiplies instead of adding
+    # (3 outer attempts x 3 inner SDK attempts x REQUEST_TIMEOUT_SECONDS each),
+    # not the bounded 3x we intend.
+    return anthropic.Anthropic(api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS, max_retries=0)
 
 
 def wrap_untrusted_content(label: str, text: str) -> str:
